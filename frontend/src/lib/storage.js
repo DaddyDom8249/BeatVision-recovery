@@ -1,6 +1,14 @@
 const KEY = "beatvision.projects.v1";
 const STORE_VERSION = 2;
 
+function createProjectId() {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+
+  return `project-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 function isObject(value) {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
@@ -225,7 +233,7 @@ export function deleteProject(id) {
 
 export function newProject(fields) {
   return normalizeProject({
-    id: crypto.randomUUID(),
+    id: createProjectId(),
     title: fields.title || "Untitled",
     artist: fields.artist || "",
     lyrics: fields.lyrics || "",
