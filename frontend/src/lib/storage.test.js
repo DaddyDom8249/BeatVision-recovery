@@ -5,6 +5,7 @@ import {
   updateProject,
   setGenerationJob,
   newProject,
+  upsertProject,
 } from "./storage";
 
 describe("BeatVision project persistence", () => {
@@ -97,5 +98,20 @@ describe("BeatVision project persistence", () => {
     expect(getProject(project.id).generationJobs.storyboard.status).toBe(
       "succeeded"
     );
+  });
+
+  test("merges a stale workflow snapshot without erasing newer fields", () => {
+    const project = newProject({ title: "Stale Snapshot" });
+    const first = upsertProject(project);
+
+    const staleSnapshot = { ...first, title: "Title Changed By Older Callback" };
+    upsertProject({ ...first, notes: "Newer saved result" });
+
+    const merged = upsertProject(staleSnapshot);
+
+    expect(merged.title).toBe("Title Changed By Older Callback");
+    expect(merged.notes).toBe("Newer saved result");
+    expect(merged.revision).toBe(3);
+    expect(getProject(project.id).notes).toBe("Newer saved result");
   });
 });
