@@ -12,9 +12,9 @@ function cleanIdArray(value) {
 }
 
 function normalizeJob(job) {
-  if (!isObject(job) || !job.id || !job.kind) return null;
+  if (!isObject(job) || !job.kind) return null;
   return {
-    id: String(job.id),
+    id: String(job.id || job.kind),
     kind: String(job.kind),
     status: ["queued", "running", "succeeded", "failed", "cancelled"].includes(job.status)
       ? job.status
@@ -83,7 +83,7 @@ export function normalizeProject(project) {
   const jobs = isObject(project.generationJobs)
     ? Object.fromEntries(
         Object.entries(project.generationJobs)
-          .map(([key, job]) => [String(key), normalizeJob(job)])
+          .map(([key, job]) => [String(key), normalizeJob({ ...job, kind: job?.kind || key })])
           .filter(([, job]) => job)
       )
     : {};
@@ -201,13 +201,16 @@ export function updateProject(id, updater) {
 }
 
 export function setGenerationJob(id, kind, patch) {
+  const now = new Date().toISOString();
   return updateProject(id, (project) => ({
     generationJobs: {
       ...(project.generationJobs || {}),
       [kind]: normalizeJob({
         ...(project.generationJobs?.[kind] || {}),
-        ...patch,
+        id: project.generationJobs?.[kind]?.id || `${kind}-${Date.now()}`,
         kind,
+        ...patch,
+        startedAt: patch?.startedAt || project.generationJobs?.[kind]?.startedAt || now,
       }),
     },
   }));
