@@ -1,5 +1,7 @@
 const KEY = "beatvision.projects.v1";
 const STORE_VERSION = 2;
+const REVISION_HISTORY_LIMIT = 8;
+const revisionHistory = new Map();
 
 function createProjectId() {
   if (globalThis.crypto?.randomUUID) {
@@ -115,8 +117,6 @@ function readStore() {
 
   const parsed = JSON.parse(raw);
 
-  // Migrate the original v1 array format in memory. The next successful write
-  // persists the versioned envelope without changing the project workflow.
   if (Array.isArray(parsed)) {
     return {
       version: STORE_VERSION,
@@ -171,6 +171,48 @@ export function getProject(id) {
   return loadProjects().find((project) => project.id === id) || null;
 }
 
+function rememberRevision(project) {
+  const history = revisionHistory.get(project.id) || [];
+  const nextHistory = [
+    ...history.filter((snapshot) => snapshot.revision !== project.revision),
+    project,
+  ].slice(-REVISION_HISTORY_LIMIT);
+  revisionHistory.set(project.id, nextHistory);
+}
+
+function findRevisionSnapshot(id, revision) {
+  return (revisionHistory.get(id) || []).find(
+    (snapshot) => snapshot.revision === revision
+  ) || null;
+}
+
+function valueChanged(before, after) {
+  return JSON.stringify(before) !== JSON.stringify(after);
+}
+
+function mergeStaleSnapshot(previous, incoming) {
+  const baseline = findRevisionSnapshot(incoming.id, incoming.revision);
+  if (!baseline) return previous;
+
+  const merged = { ...previous };
+  const protectedKeys = new Set([
+    "id",
+    "schemaVersion",
+    "revision",
+    "createdAt",
+    "updatedAt",
+  ]);
+
+  for (const key of Object.keys(incoming)) {
+    if (protectedKeys.has(key)) continue;
+    if (valueChanged(baseline[key], incoming[key])) {
+      merged[key] = incoming[key];
+    }
+  }
+
+  return merged;
+}
+
 export function upsertProject(project) {
   const now = new Date().toISOString();
   const projects = loadProjects();
@@ -178,9 +220,13 @@ export function upsertProject(project) {
   const index = projects.findIndex((item) => item.id === normalized.id);
   const previous = index >= 0 ? projects[index] : null;
 
+  const merged = previous && normalized.revision < previous.revision
+    ? mergeStaleSnapshot(previous, normalized)
+    : normalized;
+
   const next = normalizeProject({
-    ...normalized,
-    revision: (previous?.revision || normalized.revision || 0) + 1,
+    ...merged,
+    revision: (previous?.revision || merged.revision || 0) + 1,
     updatedAt: now,
   });
 
@@ -194,6 +240,7 @@ export function upsertProject(project) {
   }
 
   saveProjects(projects);
+  rememberRevision(next);
   return next;
 }
 
@@ -228,6 +275,7 @@ export function deleteProject(id) {
   const projects = loadProjects().filter(
     (project) => project.id !== id
   );
+  revisionHistory.delete(id);
   return saveProjects(projects);
 }
 
