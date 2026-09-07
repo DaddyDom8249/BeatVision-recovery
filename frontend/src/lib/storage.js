@@ -1,4 +1,5 @@
 const KEY = "beatvision.projects.v1";
+const STORE_VERSION = 2;
 
 function isObject(value) {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -8,6 +9,20 @@ function cleanIdArray(value) {
   return Array.isArray(value)
     ? [...new Set(value.filter((id) => typeof id === "string" && id))]
     : [];
+}
+
+function normalizeJob(job) {
+  if (!isObject(job) || !job.id || !job.kind) return null;
+  return {
+    id: String(job.id),
+    kind: String(job.kind),
+    status: ["queued", "running", "succeeded", "failed", "cancelled"].includes(job.status)
+      ? job.status
+      : "failed",
+    startedAt: job.startedAt || null,
+    finishedAt: job.finishedAt || null,
+    error: job.error || null,
+  };
 }
 
 export class StorageQuotaError extends Error {
@@ -65,23 +80,55 @@ export function normalizeProject(project) {
     }
   }
 
+  const jobs = isObject(project.generationJobs)
+    ? Object.fromEntries(
+        Object.entries(project.generationJobs)
+          .map(([key, job]) => [String(key), normalizeJob(job)])
+          .filter(([, job]) => job)
+      )
+    : {};
+
   return {
     ...project,
+    schemaVersion: STORE_VERSION,
+    revision: Number.isInteger(project.revision) && project.revision >= 0
+      ? project.revision
+      : 0,
     referencePhotos,
     sceneImages,
     sceneReferencePhotoIds,
+    generationJobs: jobs,
+  };
+}
+
+function readStore() {
+  const raw = localStorage.getItem(KEY);
+  if (!raw) return { version: STORE_VERSION, projects: [] };
+
+  const parsed = JSON.parse(raw);
+
+  // Migrate the original v1 array format in memory. The next successful write
+  // persists the versioned envelope without changing the project workflow.
+  if (Array.isArray(parsed)) {
+    return {
+      version: STORE_VERSION,
+      projects: parsed.map(normalizeProject).filter(Boolean),
+    };
+  }
+
+  if (!isObject(parsed) || !Array.isArray(parsed.projects)) {
+    return { version: STORE_VERSION, projects: [] };
+  }
+
+  return {
+    version: STORE_VERSION,
+    projects: parsed.projects.map(normalizeProject).filter(Boolean),
   };
 }
 
 export function loadProjects() {
   try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return [];
-
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-
-    return parsed.map(normalizeProject).filter(Boolean);
+    return readStore().projects;
   } catch (error) {
     console.error("loadProjects failed", error);
     return [];
@@ -94,7 +141,10 @@ export function saveProjects(projects) {
     : [];
 
   try {
-    localStorage.setItem(KEY, JSON.stringify(normalized));
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ version: STORE_VERSION, projects: normalized })
+    );
     return true;
   } catch (error) {
     console.error("saveProjects failed", error);
@@ -118,9 +168,11 @@ export function upsertProject(project) {
   const projects = loadProjects();
   const normalized = normalizeProject(project);
   const index = projects.findIndex((item) => item.id === normalized.id);
+  const previous = index >= 0 ? projects[index] : null;
 
   const next = normalizeProject({
     ...normalized,
+    revision: (previous?.revision || normalized.revision || 0) + 1,
     updatedAt: now,
   });
 
@@ -135,6 +187,30 @@ export function upsertProject(project) {
 
   saveProjects(projects);
   return next;
+}
+
+export function updateProject(id, updater) {
+  const current = getProject(id);
+  if (!current) return null;
+
+  const candidate = typeof updater === "function"
+    ? updater(current)
+    : { ...current, ...updater };
+
+  return upsertProject({ ...current, ...candidate, id: current.id });
+}
+
+export function setGenerationJob(id, kind, patch) {
+  return updateProject(id, (project) => ({
+    generationJobs: {
+      ...(project.generationJobs || {}),
+      [kind]: normalizeJob({
+        ...(project.generationJobs?.[kind] || {}),
+        ...patch,
+        kind,
+      }),
+    },
+  }));
 }
 
 export function deleteProject(id) {
@@ -173,6 +249,8 @@ export function newProject(fields) {
     sceneImages: {},
     sceneReferencePhotoIds: {},
     motionPlan: null,
+    generationJobs: {},
+    revision: 0,
     createdAt: null,
     updatedAt: null,
   });
