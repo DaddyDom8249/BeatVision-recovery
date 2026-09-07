@@ -3,6 +3,7 @@ import {
   loadProjects,
   saveProjects,
   updateProject,
+  setGenerationJob,
   newProject,
 } from "./storage";
 
@@ -62,5 +63,39 @@ describe("BeatVision project persistence", () => {
     const stored = getProject(project.id);
     expect(stored.generationJobs.storyboard.id).toBe("storyboard");
     expect(stored.generationJobs.storyboard.status).toBe("running");
+  });
+
+  test("persists generation job transitions without replacing the project", () => {
+    const project = newProject({ title: "Job Lifecycle" });
+    saveProjects([project]);
+
+    const queued = setGenerationJob(project.id, "storyboard", {
+      status: "queued",
+      startedAt: null,
+      finishedAt: null,
+      error: null,
+    });
+    expect(queued.generationJobs.storyboard.status).toBe("queued");
+
+    const running = setGenerationJob(project.id, "storyboard", {
+      status: "running",
+    });
+    expect(running.generationJobs.storyboard.status).toBe("running");
+    expect(running.generationJobs.storyboard.id).toBe(
+      queued.generationJobs.storyboard.id
+    );
+
+    const finished = setGenerationJob(project.id, "storyboard", {
+      status: "succeeded",
+      finishedAt: "2026-09-07T12:00:10.000Z",
+    });
+    expect(finished.id).toBe(project.id);
+    expect(finished.generationJobs.storyboard.status).toBe("succeeded");
+    expect(finished.generationJobs.storyboard.finishedAt).toBe(
+      "2026-09-07T12:00:10.000Z"
+    );
+    expect(getProject(project.id).generationJobs.storyboard.status).toBe(
+      "succeeded"
+    );
   });
 });
