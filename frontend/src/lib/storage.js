@@ -1,7 +1,10 @@
 const KEY = "beatvision.projects.v1";
+const SCENE_IMAGES_KEY_PREFIX = "beatvision.scene-images.v1:";
 const STORE_VERSION = 2;
 const REVISION_HISTORY_LIMIT = 8;
 const revisionHistory = new Map();
+const volatileGenerationJobs = new Map();
+const generationPersistenceBaselines = new Map();
 
 function createProjectId() {
   if (globalThis.crypto?.randomUUID) {
@@ -29,6 +32,8 @@ function normalizeJob(job) {
     status: ["queued", "running", "succeeded", "failed", "cancelled"].includes(job.status)
       ? job.status
       : "failed",
+    attempt: Number.isInteger(job.attempt) && job.attempt > 0 ? job.attempt : 1,
+    queuedAt: job.queuedAt || null,
     startedAt: job.startedAt || null,
     finishedAt: job.finishedAt || null,
     error: job.error || null,
@@ -51,6 +56,62 @@ export function isStorageQuotaError(error) {
     error?.code === 22 ||
     error?.code === 1014 ||
     error?.code === "BEATVISION_STORAGE_QUOTA"
+  );
+}
+
+function sceneImagesKey(id) {
+  return `${SCENE_IMAGES_KEY_PREFIX}${id}`;
+}
+
+function sceneImageManifest(sceneImages) {
+  return Object.fromEntries(
+    Object.entries(sceneImages || {}).map(([key, entry]) => {
+      if (!entry || typeof entry !== "object") return [key, entry];
+      const { imageDataUrl, ...metadata } = entry;
+      return [key, { ...metadata, hasImageData: Boolean(imageDataUrl) }];
+    })
+  );
+}
+
+function readSessionSceneImages(id) {
+  if (typeof sessionStorage === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(sceneImagesKey(id));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return isObject(parsed) ? parsed : null;
+  } catch (error) {
+    console.warn("Scene image session storage read failed", error);
+    return null;
+  }
+}
+
+function writeSessionSceneImages(id, sceneImages) {
+  if (typeof sessionStorage === "undefined") return false;
+  try {
+    sessionStorage.setItem(
+      sceneImagesKey(id),
+      JSON.stringify(sceneImages || {})
+    );
+    return true;
+  } catch (error) {
+    console.warn("Scene image session storage write failed", error);
+    return false;
+  }
+}
+
+function removeSessionSceneImages(id) {
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    sessionStorage.removeItem(sceneImagesKey(id));
+  } catch (error) {
+    console.warn("Scene image session storage removal failed", error);
+  }
+}
+
+function hasInlineSceneImages(sceneImages) {
+  return Object.values(sceneImages || {}).some(
+    (entry) => typeof entry?.imageDataUrl === "string" && entry.imageDataUrl
   );
 }
 
@@ -134,6 +195,21 @@ function readStore() {
   };
 }
 
+function writeStore(projects) {
+  const normalized = Array.isArray(projects)
+    ? projects.map(normalizeProject).filter(Boolean)
+    : [];
+  const persisted = normalized.map((project) => ({
+    ...project,
+    sceneImages: sceneImageManifest(project.sceneImages),
+  }));
+
+  localStorage.setItem(
+    KEY,
+    JSON.stringify({ version: STORE_VERSION, projects: persisted })
+  );
+}
+
 export function loadProjects() {
   try {
     return readStore().projects;
@@ -148,18 +224,24 @@ export function saveProjects(projects) {
     ? projects.map(normalizeProject).filter(Boolean)
     : [];
 
+  for (const project of normalized) {
+    const sceneImages = project.sceneImages || {};
+    if (Object.keys(sceneImages).length === 0) {
+      removeSessionSceneImages(project.id);
+    } else if (hasInlineSceneImages(sceneImages)) {
+      writeSessionSceneImages(project.id, sceneImages);
+    }
+  }
+
   try {
-    localStorage.setItem(
-      KEY,
-      JSON.stringify({ version: STORE_VERSION, projects: normalized })
-    );
+    writeStore(normalized);
     return true;
   } catch (error) {
     console.error("saveProjects failed", error);
 
     if (isStorageQuotaError(error)) {
       throw new StorageQuotaError(
-        "Browser storage is full. Remove large reference or scene images before adding more."
+        "Browser storage is full. BeatVision keeps large scene images in browser session storage, but reference photos may still need to be removed."
       );
     }
 
@@ -167,8 +249,61 @@ export function saveProjects(projects) {
   }
 }
 
+function hydrateSceneImages(project) {
+  if (!project) return project;
+
+  const sessionImages = readSessionSceneImages(project.id);
+  if (sessionImages && Object.keys(sessionImages).length > 0) {
+    if (hasInlineSceneImages(project.sceneImages)) {
+      try {
+        const projects = readStore().projects;
+        const index = projects.findIndex((item) => item.id === project.id);
+        if (index >= 0) {
+          projects[index] = { ...projects[index], sceneImages: sceneImageManifest(projects[index].sceneImages) };
+          writeStore(projects);
+        }
+      } catch (error) {
+        console.warn("Could not compact legacy inline scene images", error);
+      }
+    }
+    return { ...project, sceneImages: sessionImages };
+  }
+
+  if (hasInlineSceneImages(project.sceneImages)) {
+    const saved = writeSessionSceneImages(project.id, project.sceneImages);
+    if (saved) {
+      try {
+        const projects = readStore().projects;
+        const index = projects.findIndex((item) => item.id === project.id);
+        if (index >= 0) {
+          projects[index] = { ...projects[index], sceneImages: sceneImageManifest(projects[index].sceneImages) };
+          writeStore(projects);
+        }
+      } catch (error) {
+        console.warn("Could not compact migrated scene images", error);
+      }
+    }
+  }
+
+  return project;
+}
+
+function mergeVolatileGenerationJobs(project) {
+  const volatileJobs = volatileGenerationJobs.get(project?.id);
+  if (!project || !volatileJobs) return project;
+
+  return normalizeProject({
+    ...project,
+    generationJobs: {
+      ...(project.generationJobs || {}),
+      ...volatileJobs,
+    },
+  });
+}
+
 export function getProject(id) {
-  return loadProjects().find((project) => project.id === id) || null;
+  const project = loadProjects().find((project) => project.id === id) || null;
+  return mergeVolatileGenerationJobs(hydrateSceneImages(project));
 }
 
 function rememberRevision(project) {
@@ -255,20 +390,149 @@ export function updateProject(id, updater) {
   return upsertProject({ ...current, ...candidate, id: current.id });
 }
 
-export function setGenerationJob(id, kind, patch) {
+function buildGenerationJob(previous, kind, patch, now) {
+  const isNewAttempt = patch.status === "queued";
+  const attempt = isNewAttempt
+    ? (Number.isInteger(previous?.attempt) ? previous.attempt : 0) + 1
+    : (Number.isInteger(previous?.attempt) ? previous.attempt : 1);
+
+  return normalizeJob({
+    ...(previous || {}),
+    id: isNewAttempt
+      ? `${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      : previous?.id || `${kind}-${Date.now()}`,
+    kind,
+    ...patch,
+    attempt,
+    queuedAt: isNewAttempt
+      ? patch.queuedAt || now
+      : previous?.queuedAt || patch.queuedAt || now,
+    startedAt:
+      patch.status === "running"
+        ? patch.startedAt || previous?.startedAt || now
+        : isNewAttempt
+          ? patch.startedAt || null
+          : patch.startedAt || previous?.startedAt || null,
+    finishedAt: isNewAttempt
+      ? patch.finishedAt || null
+      : patch.finishedAt || previous?.finishedAt || null,
+    error: isNewAttempt
+      ? patch.error || null
+      : patch.error || previous?.error || null,
+  });
+}
+
+function generationPersistenceKey(id, kind) {
+  return `${id}:${kind}`;
+}
+
+export function setGenerationJob(id, kind, patch = {}) {
   const now = new Date().toISOString();
-  return updateProject(id, (project) => ({
-    generationJobs: {
-      ...(project.generationJobs || {}),
-      [kind]: normalizeJob({
-        ...(project.generationJobs?.[kind] || {}),
-        id: project.generationJobs?.[kind]?.id || `${kind}-${Date.now()}`,
+  const current = getProject(id);
+  if (!current) return null;
+
+  if (patch.status === "succeeded") {
+    const baseline = generationPersistenceBaselines.get(
+      generationPersistenceKey(id, kind)
+    );
+    const currentRevision = Number.isInteger(current.revision)
+      ? current.revision
+      : 0;
+
+    if (baseline && currentRevision <= baseline.revision) {
+      const failedJob = buildGenerationJob(
+        current.generationJobs?.[kind] || null,
         kind,
-        ...patch,
-        startedAt: patch?.startedAt || project.generationJobs?.[kind]?.startedAt || now,
-      }),
-    },
-  }));
+        {
+          status: "failed",
+          error: "Generated result could not be persisted to browser storage.",
+          finishedAt: now,
+        },
+        now
+      );
+
+      try {
+        return updateProject(id, (project) => ({
+          generationJobs: {
+            ...(project.generationJobs || {}),
+            [kind]: failedJob,
+          },
+        }));
+      } catch (error) {
+        if (!isStorageQuotaError(error)) throw error;
+        const jobs = volatileGenerationJobs.get(id) || {};
+        jobs[kind] = failedJob;
+        volatileGenerationJobs.set(id, jobs);
+        return {
+          ...current,
+          generationJobs: {
+            ...(current.generationJobs || {}),
+            [kind]: failedJob,
+          },
+        };
+      }
+    }
+
+    generationPersistenceBaselines.delete(generationPersistenceKey(id, kind));
+  }
+
+  const nextJob = buildGenerationJob(
+    current.generationJobs?.[kind] || null,
+    kind,
+    patch,
+    now
+  );
+
+  try {
+    const result = updateProject(id, (project) => ({
+      generationJobs: {
+        ...(project.generationJobs || {}),
+        [kind]: nextJob,
+      },
+    }));
+
+    if (patch.status === "running" && result) {
+      generationPersistenceBaselines.set(generationPersistenceKey(id, kind), {
+        jobId: nextJob.id,
+        revision: result.revision,
+      });
+    }
+
+    if (patch.status === "queued") {
+      generationPersistenceBaselines.delete(generationPersistenceKey(id, kind));
+    }
+
+    return result;
+  } catch (error) {
+    if (!isStorageQuotaError(error)) throw error;
+
+    const jobs = volatileGenerationJobs.get(id) || {};
+    jobs[kind] = nextJob;
+    volatileGenerationJobs.set(id, jobs);
+
+    if (patch.status === "running") {
+      generationPersistenceBaselines.set(generationPersistenceKey(id, kind), {
+        jobId: nextJob.id,
+        revision: current.revision || 0,
+      });
+    }
+
+    if (patch.status === "queued") {
+      generationPersistenceBaselines.delete(generationPersistenceKey(id, kind));
+    }
+
+    console.warn(
+      "Generation job state is using volatile memory because browser storage is full."
+    );
+
+    return {
+      ...current,
+      generationJobs: {
+        ...(current.generationJobs || {}),
+        [kind]: nextJob,
+      },
+    };
+  }
 }
 
 export function deleteProject(id) {
@@ -276,6 +540,11 @@ export function deleteProject(id) {
     (project) => project.id !== id
   );
   revisionHistory.delete(id);
+  volatileGenerationJobs.delete(id);
+  for (const key of generationPersistenceBaselines.keys()) {
+    if (key.startsWith(`${id}:`)) generationPersistenceBaselines.delete(key);
+  }
+  removeSessionSceneImages(id);
   return saveProjects(projects);
 }
 

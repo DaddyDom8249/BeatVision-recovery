@@ -108,14 +108,12 @@ def _extract_json(raw: str) -> dict:
             repaired = repair_json(s, return_objects=False)
             return json.loads(repaired)
 
-    # try fenced ```json ... ```
     m = re.search(r"```json\s*(\{.*?\})\s*```", raw, re.DOTALL)
     if m:
         return _parse(m.group(1))
     m = re.search(r"```\s*(\{.*?\})\s*```", raw, re.DOTALL)
     if m:
         return _parse(m.group(1))
-    # find first { .... last }
     start = raw.find("{")
     end = raw.rfind("}")
     if start != -1 and end != -1 and end > start:
@@ -183,26 +181,25 @@ async def root():
 
 @api_router.get("/provider-status")
 async def provider_status():
-    image_ready = bool(EMERGENT_LLM_KEY)
-    text_ready = bool(EMERGENT_LLM_KEY)
+    provider_ready = bool(EMERGENT_LLM_KEY)
     return {
         "text_analysis": {
-            "connected": text_ready,
-            "provider": "Anthropic Claude Sonnet 4.5 (via Emergent)" if text_ready else None,
+            "connected": provider_ready,
+            "provider": "Anthropic Claude Sonnet 4.5 (via Emergent)" if provider_ready else None,
             "purpose": "Text generation: World Report, World Assets, Storyboard, Scene Prompts",
-            "status": "ready" if text_ready else "demo_mode",
+            "status": "ready" if provider_ready else "demo_mode",
         },
         "image_generation": {
-            "connected": image_ready,
-            "provider": "Google Gemini Nano Banana (via Emergent)" if image_ready else None,
+            "connected": provider_ready,
+            "provider": "Google Gemini Nano Banana (via Emergent)" if provider_ready else None,
             "purpose": "Scene image generation (text-to-image)",
-            "status": "ready" if image_ready else "not_connected",
+            "status": "ready" if provider_ready else "not_connected",
         },
         "reference_photo_image_generation": {
-            "connected": image_ready,
-            "provider": "Google Gemini Nano Banana (via Emergent)" if image_ready else None,
+            "connected": provider_ready,
+            "provider": "Google Gemini Nano Banana (via Emergent)" if provider_ready else None,
             "purpose": "Scene image generation guided by uploaded reference photos",
-            "status": "ready" if image_ready else "not_connected",
+            "status": "ready" if provider_ready else "not_connected",
         },
         "motion_generation": {"connected": False, "purpose": "Turn stills into short motion clips", "status": "not_connected"},
         "video_export": {"connected": False, "purpose": "Stitch approved clips into MP4", "status": "demo_plan_only"},
@@ -458,7 +455,6 @@ async def generate_scene_image(req: SceneImageRequest):
     if not EMERGENT_LLM_KEY:
         raise HTTPException(status_code=503, detail="Image provider is not configured.")
 
-    # Build ImageContent list from reference photos (strip data URL prefix if present)
     image_contents = []
     for photo in req.referenceImages:
         if not photo.imageDataUrl:
@@ -532,10 +528,13 @@ Avoid: {req.negativePrompt or 'blur, low quality, watermark, distorted anatomy'}
 # ------------------------------------------------------------
 app.include_router(api_router)
 
+cors_origins = [origin.strip() for origin in os.environ.get("CORS_ORIGINS", "*").split(",") if origin.strip()]
+allow_all_origins = cors_origins == ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
+    allow_credentials=not allow_all_origins,
+    allow_origins=cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
