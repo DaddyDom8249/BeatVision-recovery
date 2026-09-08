@@ -1,4 +1,5 @@
 const KEY = "beatvision.projects.v1";
+const SCENE_IMAGES_KEY_PREFIX = "beatvision.scene-images.v1:";
 const STORE_VERSION = 2;
 const REVISION_HISTORY_LIMIT = 8;
 const revisionHistory = new Map();
@@ -55,6 +56,62 @@ export function isStorageQuotaError(error) {
     error?.code === 22 ||
     error?.code === 1014 ||
     error?.code === "BEATVISION_STORAGE_QUOTA"
+  );
+}
+
+function sceneImagesKey(id) {
+  return `${SCENE_IMAGES_KEY_PREFIX}${id}`;
+}
+
+function sceneImageManifest(sceneImages) {
+  return Object.fromEntries(
+    Object.entries(sceneImages || {}).map(([key, entry]) => {
+      if (!entry || typeof entry !== "object") return [key, entry];
+      const { imageDataUrl, ...metadata } = entry;
+      return [key, { ...metadata, hasImageData: Boolean(imageDataUrl) }];
+    })
+  );
+}
+
+function readSessionSceneImages(id) {
+  if (typeof sessionStorage === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(sceneImagesKey(id));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return isObject(parsed) ? parsed : null;
+  } catch (error) {
+    console.warn("Scene image session storage read failed", error);
+    return null;
+  }
+}
+
+function writeSessionSceneImages(id, sceneImages) {
+  if (typeof sessionStorage === "undefined") return false;
+  try {
+    sessionStorage.setItem(
+      sceneImagesKey(id),
+      JSON.stringify(sceneImages || {})
+    );
+    return true;
+  } catch (error) {
+    console.warn("Scene image session storage write failed", error);
+    return false;
+  }
+}
+
+function removeSessionSceneImages(id) {
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    sessionStorage.removeItem(sceneImagesKey(id));
+  } catch (error) {
+    console.warn("Scene image session storage removal failed", error);
+  }
+}
+
+function hasInlineSceneImages(sceneImages) {
+  return Object.values(sceneImages || {}).some(
+    (entry) => typeof entry?.imageDataUrl === "string" && entry.imageDataUrl
   );
 }
 
@@ -138,6 +195,21 @@ function readStore() {
   };
 }
 
+function writeStore(projects) {
+  const normalized = Array.isArray(projects)
+    ? projects.map(normalizeProject).filter(Boolean)
+    : [];
+  const persisted = normalized.map((project) => ({
+    ...project,
+    sceneImages: sceneImageManifest(project.sceneImages),
+  }));
+
+  localStorage.setItem(
+    KEY,
+    JSON.stringify({ version: STORE_VERSION, projects: persisted })
+  );
+}
+
 export function loadProjects() {
   try {
     return readStore().projects;
@@ -152,23 +224,64 @@ export function saveProjects(projects) {
     ? projects.map(normalizeProject).filter(Boolean)
     : [];
 
+  for (const project of normalized) {
+    if (!hasInlineSceneImages(project.sceneImages)) continue;
+    writeSessionSceneImages(project.id, project.sceneImages);
+  }
+
   try {
-    localStorage.setItem(
-      KEY,
-      JSON.stringify({ version: STORE_VERSION, projects: normalized })
-    );
+    writeStore(normalized);
     return true;
   } catch (error) {
     console.error("saveProjects failed", error);
 
     if (isStorageQuotaError(error)) {
       throw new StorageQuotaError(
-        "Browser storage is full. Remove large reference or scene images before adding more."
+        "Browser storage is full. BeatVision keeps large scene images in browser session storage, but reference photos may still need to be removed."
       );
     }
 
     throw error;
   }
+}
+
+function hydrateSceneImages(project) {
+  if (!project) return project;
+
+  const sessionImages = readSessionSceneImages(project.id);
+  if (sessionImages && Object.keys(sessionImages).length > 0) {
+    if (hasInlineSceneImages(project.sceneImages)) {
+      try {
+        const projects = readStore().projects;
+        const index = projects.findIndex((item) => item.id === project.id);
+        if (index >= 0) {
+          projects[index] = { ...projects[index], sceneImages: sceneImageManifest(projects[index].sceneImages) };
+          writeStore(projects);
+        }
+      } catch (error) {
+        console.warn("Could not compact legacy inline scene images", error);
+      }
+    }
+    return { ...project, sceneImages: sessionImages };
+  }
+
+  if (hasInlineSceneImages(project.sceneImages)) {
+    const saved = writeSessionSceneImages(project.id, project.sceneImages);
+    if (saved) {
+      try {
+        const projects = readStore().projects;
+        const index = projects.findIndex((item) => item.id === project.id);
+        if (index >= 0) {
+          projects[index] = { ...projects[index], sceneImages: sceneImageManifest(projects[index].sceneImages) };
+          writeStore(projects);
+        }
+      } catch (error) {
+        console.warn("Could not compact migrated scene images", error);
+      }
+    }
+  }
+
+  return project;
 }
 
 function mergeVolatileGenerationJobs(project) {
@@ -186,7 +299,7 @@ function mergeVolatileGenerationJobs(project) {
 
 export function getProject(id) {
   const project = loadProjects().find((project) => project.id === id) || null;
-  return mergeVolatileGenerationJobs(project);
+  return mergeVolatileGenerationJobs(hydrateSceneImages(project));
 }
 
 function rememberRevision(project) {
@@ -427,6 +540,7 @@ export function deleteProject(id) {
   for (const key of generationPersistenceBaselines.keys()) {
     if (key.startsWith(`${id}:`)) generationPersistenceBaselines.delete(key);
   }
+  removeSessionSceneImages(id);
   return saveProjects(projects);
 }
 
