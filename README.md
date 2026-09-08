@@ -4,9 +4,15 @@
 
 BeatVision is an AI-assisted music-visualization workflow that turns a song into a consistent visual world, storyboard, scene prompts, scene images, and an eventual motion/video production pipeline.
 
+## Demo / provider-pitch status
+
+The `audit-stabilization` branch is the current demonstration and provider-pitch working branch. It is intended to demonstrate the existing BeatVision workflow reliably without changing the original BeatVision repository or pretending unfinished production integrations are complete.
+
+See `DEMO_PITCH.md` for the five-minute demonstration script, provider pitch, honest capability statement, and pre-demo checklist.
+
 ## Current repository status
 
-This repository is the recovered **Phase 4A baseline**. It is intentionally treated as the working recovery source, not as a claim that it contains every change from later BeatVision exports.
+This repository is the recovered **Phase 4A baseline** with subsequent stabilization work applied on `audit-stabilization`. It is intentionally treated as the working recovery source, not as a claim that it contains every change from later BeatVision exports.
 
 The project currently contains:
 
@@ -23,6 +29,8 @@ The project currently contains:
 - FastAPI backend
 - Cloudflare Worker and local worker proxy support
 - Provider/fallback tests and CI validation
+- Frontend workflow-input and generation-output validation
+- Generation provenance metadata
 
 ## Architecture rules
 
@@ -70,11 +78,13 @@ Use `scripts/start-worker-backed-local.sh` when testing the Cloudflare Worker th
 
 ## CI
 
-GitHub Actions validates Worker syntax/configuration, backend Python syntax, the local worker proxy, frontend persistence regressions, and the production frontend build on pushes and pull requests affecting the application.
+GitHub Actions validates Worker syntax/configuration, backend Python syntax, the local worker proxy, frontend persistence regressions, the backend provider contract audit, and the production frontend build on pushes and pull requests affecting the application.
 
-## Important limitation
+## Honest capability boundary
 
-The recovered baseline is not the newest Replit/TRUE_COMPLETE export. Later exports may contain additional functionality that should only be merged after code-level comparison and validation. Do not blindly overwrite this repository with a later snapshot.
+The recovered Phase 4A implementation has a working browser-native WebM renderer. AI motion generation and server-side MP4 export are **not** claimed as completed capabilities in this branch. Those are the next production infrastructure integrations.
+
+Later exports may contain additional functionality that should only be merged after code-level comparison and validation. Do not blindly overwrite this repository with a later snapshot.
 
 ## Recovery documentation
 
