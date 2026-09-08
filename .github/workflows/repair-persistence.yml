@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   repair:
-    if: github.actor != 'github-actions[bot]'
+    if: ${{ github.actor != 'github-actions[bot]' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -34,13 +34,13 @@ jobs:
           text = text.replace(old, new, 1)
 
           old = '''  useEffect(() => {\n    const p = getProject(id);\n    if (!p) {\n      toast.error("Project not found");\n      nav("/dashboard");\n      return;\n    }\n    projectRef.current = p;\n    setProject(p);\n    fetchProviderStatus()\n      .then(setProviderStatus)\n      .catch(() => setProviderStatus(null));\n  }, [id, nav]);'''
-          new = '''  useEffect(() => {\n    let cancelled = false;\n    const p = getProject(id);\n    if (!p) {\n      toast.error("Project not found");\n      nav("/dashboard");\n      return undefined;\n    }\n\n    projectRef.current = p;\n    setProject(p);\n\n    (async () => {\n      try {\n        const storedSceneImages = await loadSceneImages(id);\n        if (cancelled) return;\n\n        const localSceneImages = p.sceneImages || {};\n        const hasInlineImages = Object.values(localSceneImages).some(\n          (entry) => typeof entry?.imageDataUrl === "string" && entry.imageDataUrl\n        );\n\n        if (storedSceneImages && Object.keys(storedSceneImages).length > 0) {\n          const hydrated = { ...p, sceneImages: storedSceneImages };\n          projectRef.current = hydrated;\n          setProject(hydrated);\n        } else if (hasInlineImages) {\n          await saveSceneImages(id, localSceneImages);\n          if (cancelled) return;\n          const migrated = upsertProject({\n            ...p,\n            sceneImages: sceneImageManifest(localSceneImages),\n          });\n          const hydrated = { ...migrated, sceneImages: localSceneImages };\n          projectRef.current = hydrated;\n          setProject(hydrated);\n        }\n      } catch (error) {\n        console.error("Scene image hydration failed", error);\n      }\n    })();\n\n    fetchProviderStatus()\n      .then((status) => { if (!cancelled) setProviderStatus(status); })\n      .catch(() => { if (!cancelled) setProviderStatus(null); });\n\n    return () => { cancelled = true; };\n  }, [id, nav]);'''
+          new = '''  useEffect(() => {\n    let cancelled = false;\n    const p = getProject(id);\n    if (!p) {\n      toast.error("Project not found");\n      nav("/dashboard");\n      return undefined;\n    }\n\n    projectRef.current = p;\n    setProject(p);\n\n    (async () => {\n      try {\n        const storedSceneImages = await loadSceneImages(id);\n        if (cancelled) return;\n\n        const localSceneImages = p.sceneImages || {};\n        const hasInlineImages = Object.values(localSceneImages).some(\n          (entry) => typeof entry?.imageDataUrl === "string" && entry.imageDataUrl\n        );\n\n        if (storedSceneImages && Object.keys(storedSceneImages).length > 0) {\n          const hydrated = { ...p, sceneImages: storedSceneImages };\n          projectRef.current = hydrated;\n          setProject(hydrated);\n        } else if (hasInlineImages) {\n          const savedToIndexedDb = await saveSceneImages(id, localSceneImages);\n          if (cancelled) return;\n          const persistedImages = savedToIndexedDb\n            ? sceneImageManifest(localSceneImages)\n            : localSceneImages;\n          const migrated = upsertProject({ ...p, sceneImages: persistedImages });\n          const hydrated = { ...migrated, sceneImages: localSceneImages };\n          projectRef.current = hydrated;\n          setProject(hydrated);\n        }\n      } catch (error) {\n        console.error("Scene image hydration failed", error);\n      }\n    })();\n\n    fetchProviderStatus()\n      .then((status) => { if (!cancelled) setProviderStatus(status); })\n      .catch(() => { if (!cancelled) setProviderStatus(null); });\n\n    return () => { cancelled = true; };\n  }, [id, nav]);'''
           if old not in text:
               raise SystemExit('effect anchor not found')
           text = text.replace(old, new, 1)
 
           old = '''  function persist(patch) {\n    const current = projectRef.current || project;\n    if (!current) return;\n\n    const next = { ...current, ...patch };\n\n    projectRef.current = next;\n    setProject(next);\n\n    try {\n      upsertProject(next);\n    } catch (error) {'''
-          new = '''  function sceneImageManifest(sceneImages) {\n    return Object.fromEntries(\n      Object.entries(sceneImages || {}).map(([key, entry]) => {\n        if (!entry || typeof entry !== "object") return [key, entry];\n        const { imageDataUrl, ...metadata } = entry;\n        return [key, { ...metadata, hasImageData: Boolean(imageDataUrl) }];\n      })\n    );\n  }\n\n  async function persist(patch) {\n    const current = projectRef.current || project;\n    if (!current) return false;\n\n    const next = { ...current, ...patch };\n    const hasSceneImages = Object.prototype.hasOwnProperty.call(patch, "sceneImages");\n    const persistedPatch = hasSceneImages\n      ? { ...patch, sceneImages: sceneImageManifest(patch.sceneImages) }\n      : patch;\n    const persistedProject = { ...current, ...persistedPatch };\n\n    try {\n      if (hasSceneImages) {\n        await saveSceneImages(current.id, patch.sceneImages || {});\n      }\n      const saved = upsertProject(persistedProject);\n      const visible = hasSceneImages ? { ...saved, sceneImages: patch.sceneImages || {} } : saved;\n      projectRef.current = visible;\n      setProject(visible);\n      return true;\n    } catch (error) {'''
+          new = '''  function sceneImageManifest(sceneImages) {\n    return Object.fromEntries(\n      Object.entries(sceneImages || {}).map(([key, entry]) => {\n        if (!entry || typeof entry !== "object") return [key, entry];\n        const { imageDataUrl, ...metadata } = entry;\n        return [key, { ...metadata, hasImageData: Boolean(imageDataUrl) }];\n      })\n    );\n  }\n\n  async function persist(patch) {\n    const current = projectRef.current || project;\n    if (!current) return false;\n\n    const next = { ...current, ...patch };\n    const hasSceneImages = Object.prototype.hasOwnProperty.call(patch, "sceneImages");\n    let persistedPatch = patch;\n\n    try {\n      if (hasSceneImages) {\n        const savedToIndexedDb = await saveSceneImages(current.id, patch.sceneImages || {});\n        persistedPatch = savedToIndexedDb\n          ? { ...patch, sceneImages: sceneImageManifest(patch.sceneImages) }\n          : patch;\n      }\n\n      const saved = upsertProject({ ...current, ...persistedPatch });\n      const visible = hasSceneImages\n        ? { ...saved, sceneImages: patch.sceneImages || {} }\n        : saved;\n      projectRef.current = visible;\n      setProject(visible);\n      return true;\n    } catch (error) {'''
           if old not in text:
               raise SystemExit('persist anchor not found')
           text = text.replace(old, new, 1)
@@ -63,10 +63,19 @@ jobs:
               s = s.replace(marker, helper + marker, 1)
 
           old = '''  const sceneImages = isObject(project.sceneImages)\n    ? project.sceneImages\n    : {};'''
-          new = '''  const sceneImages = isObject(project.sceneImages)\n    ? sceneImageManifest(project.sceneImages)\n    : {};'''
+          new = '''  const sceneImages = isObject(project.sceneImages)\n    ? project.sceneImages\n    : {};'''
           if old not in s:
               raise SystemExit('sceneImages normalize anchor not found')
           s = s.replace(old, new, 1)
+
+          old = '''    const normalized = Array.isArray(projects)\n    ? projects.map(normalizeProject).filter(Boolean)\n    : [];'''
+          if old not in s:
+              old = '''  const normalized = Array.isArray(projects)\n    ? projects.map(normalizeProject).filter(Boolean)\n    : [];'''
+          new = '''  const normalized = Array.isArray(projects)\n    ? projects.map(normalizeProject).filter(Boolean)\n    : [];\n  const persisted = normalized.map((project) => ({\n    ...project,\n    sceneImages: sceneImageManifest(project.sceneImages),\n  }));'''
+          if old not in s:
+              raise SystemExit('saveProjects anchor not found')
+          s = s.replace(old, new, 1)
+          s = s.replace('JSON.stringify({ version: STORE_VERSION, projects: normalized })', 'JSON.stringify({ version: STORE_VERSION, projects: persisted })', 1)
           storage.write_text(s)
 
           image_store = Path('frontend/src/lib/sceneImageStorage.js')
@@ -79,7 +88,7 @@ function canUseIndexedDb() {
 
 function openDatabase() {
   if (!canUseIndexedDb()) {
-    return Promise.reject(new Error("IndexedDB is unavailable."));
+    return Promise.resolve(null);
   }
 
   return new Promise((resolve, reject) => {
@@ -96,8 +105,8 @@ function openDatabase() {
 }
 
 export async function loadSceneImages(projectId) {
-  if (!canUseIndexedDb()) return null;
   const db = await openDatabase();
+  if (!db) return null;
   try {
     return await new Promise((resolve, reject) => {
       const request = db.transaction(STORE_NAME, "readonly")
@@ -112,8 +121,8 @@ export async function loadSceneImages(projectId) {
 }
 
 export async function saveSceneImages(projectId, sceneImages) {
-  if (!canUseIndexedDb()) return false;
   const db = await openDatabase();
+  if (!db) return false;
   try {
     await new Promise((resolve, reject) => {
       const request = db.transaction(STORE_NAME, "readwrite")
@@ -129,8 +138,8 @@ export async function saveSceneImages(projectId, sceneImages) {
 }
 
 export async function deleteSceneImages(projectId) {
-  if (!canUseIndexedDb()) return false;
   const db = await openDatabase();
+  if (!db) return false;
   try {
     await new Promise((resolve, reject) => {
       const request = db.transaction(STORE_NAME, "readwrite")
@@ -154,14 +163,14 @@ export async function deleteSceneImages(projectId) {
             echo "No persistence changes required"
             exit 0
           fi
-          git commit -m "Persist scene images outside localStorage"
+          git commit -m "Persist scene images outside localStorage [repair]"
           git push origin HEAD:audit-stabilization
 
       - name: Remove temporary repair workflow
-        if: success()
+        if: ${{ success() }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git rm .github/workflows/repair-persistence.yml
-          git commit -m "Remove temporary persistence repair workflow"
+          git commit -m "Remove temporary persistence repair workflow [repair]"
           git push origin HEAD:audit-stabilization
