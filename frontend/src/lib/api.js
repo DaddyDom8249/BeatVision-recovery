@@ -1,6 +1,8 @@
 import axios from "axios";
 import { attachGenerationMetadata } from "./generationMetadata";
 
+export { attachGenerationMetadata } from "./generationMetadata";
+
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const IMAGE_TEST_URL = process.env.REACT_APP_IMAGE_TEST_URL || "";
 
@@ -59,7 +61,13 @@ export function validateGenerationInput(kind, project) {
 
 function projectContext(project) {
   const lyrics = (project.lyrics || "").slice(0, 1200);
-  const notes = (project.notes ?? project.creativeNotes ?? "").slice(0, 500);
+  const notesSource =
+    typeof project.notes === "string" && project.notes.trim()
+      ? project.notes
+      : typeof project.creativeNotes === "string"
+        ? project.creativeNotes
+        : "";
+  const notes = notesSource.slice(0, 500);
 
   return {
     title: (project.title || "").slice(0, 120),
