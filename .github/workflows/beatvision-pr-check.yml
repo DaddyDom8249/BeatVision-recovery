@@ -77,7 +77,7 @@ jobs:
 
       - name: Run credential-independent backend contract audit
         run: |
-          python -m pip install --disable-pip-version-check --no-input pytest
+          python -m pip install --disable-pip-version-check --no-input "pytest>=8,<10" pytest-xdist
           python -m pytest backend/tests/test_provider_routing.py -q
 
       - name: Smoke-test local Worker proxy
@@ -121,14 +121,7 @@ jobs:
                       self.send_json(403, {"detail": "bad key"})
                       return
 
-                  self.send_json(
-                      200,
-                      {
-                          "status": "ok",
-                          "aiBindingConfigured": True,
-                          "accessKeyConfigured": True,
-                      },
-                  )
+                  self.send_json(200, {"status": "ok", "aiBindingConfigured": True, "accessKeyConfigured": True})
 
               def do_POST(self):
                   if not self.authorized():
@@ -138,14 +131,7 @@ jobs:
                   length = int(self.headers.get("Content-Length", "0"))
                   raw = self.rfile.read(length)
                   payload = json.loads(raw.decode("utf-8"))
-
-                  self.send_json(
-                      200,
-                      {
-                          "authenticated": True,
-                          "receivedScenePrompt": payload.get("scenePrompt"),
-                      },
-                  )
+                  self.send_json(200, {"authenticated": True, "receivedScenePrompt": payload.get("scenePrompt")})
 
 
           ThreadingHTTPServer(("127.0.0.1", 18080), Handler).serve_forever()
@@ -160,10 +146,7 @@ jobs:
           PROXY_PID=$!
 
           for _ in $(seq 1 40); do
-            if curl -fsS \
-              -H "Origin: http://127.0.0.1:3000" \
-              http://127.0.0.1:8001/api/health > "$TMP_DIR/health.json"
-            then
+            if curl -fsS -H "Origin: http://127.0.0.1:3000" http://127.0.0.1:8001/api/health > "$TMP_DIR/health.json"; then
               break
             fi
             sleep 0.25
@@ -173,35 +156,22 @@ jobs:
           python - "$HEALTH" <<'PY'
           import json
           import sys
-
           payload = json.loads(sys.argv[1])
           assert payload["status"] == "ok"
           assert payload["aiBindingConfigured"] is True
           assert payload["accessKeyConfigured"] is True
           PY
 
-          HEADERS="$(curl -sS -D - -o /dev/null \
-            -H "Origin: http://127.0.0.1:3000" \
-            http://127.0.0.1:8001/api/health)"
+          HEADERS="$(curl -sS -D - -o /dev/null -H "Origin: http://127.0.0.1:3000" http://127.0.0.1:8001/api/health)"
+          printf '%s\n' "$HEADERS" | tr -d '\r' | grep -qi '^Access-Control-Allow-Origin: http://127.0.0.1:3000$'
 
-          printf '%s\n' "$HEADERS" | tr -d '\r' | grep -qi \
-            '^Access-Control-Allow-Origin: http://127.0.0.1:3000$'
-
-          FOREIGN_CODE="$(curl -sS -o /dev/null -w '%{http_code}' \
-            -H "Origin: https://example.invalid" \
-            http://127.0.0.1:8001/api/health)"
+          FOREIGN_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -H "Origin: https://example.invalid" http://127.0.0.1:8001/api/health)"
           [ "$FOREIGN_CODE" = "403" ]
 
-          GENERATED="$(curl -fsS \
-            -H "Origin: http://127.0.0.1:3000" \
-            -H "Content-Type: application/json" \
-            -d '{"scenePrompt":"CI proxy test"}' \
-            http://127.0.0.1:8001/api/generate-scene-image)"
-
+          GENERATED="$(curl -fsS -H "Origin: http://127.0.0.1:3000" -H "Content-Type: application/json" -d '{"scenePrompt":"CI proxy test"}' http://127.0.0.1:8001/api/generate-scene-image)"
           python - "$GENERATED" <<'PY'
           import json
           import sys
-
           payload = json.loads(sys.argv[1])
           assert payload["authenticated"] is True
           assert payload["receivedScenePrompt"] == "CI proxy test"
