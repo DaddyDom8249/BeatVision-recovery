@@ -59,6 +59,47 @@ export function validateGenerationInput(kind, project) {
   return true;
 }
 
+export function validateGenerationOutput(kind, data) {
+  if (!data || typeof data !== "object") {
+    throw workflowGuard(`BeatVision ${kind} generation returned an invalid response.`);
+  }
+
+  switch (kind) {
+    case "world-report":
+      if (!data.logline || !data.visual_world_setting || !Array.isArray(data.seven_story_beats)) {
+        throw workflowGuard("Visual World Report generation returned incomplete data. Please regenerate.");
+      }
+      break;
+    case "world-assets":
+      if (!data.world_style_bible || !data.character_sheet || !data.environment_sheet) {
+        throw workflowGuard("World Assets generation returned incomplete data. Please regenerate.");
+      }
+      break;
+    case "storyboard": {
+      const scenes = Array.isArray(data.scenes) ? data.scenes : [];
+      const numbers = scenes.map((scene) => Number(scene?.scene_number));
+      if (scenes.length !== 8 || new Set(numbers).size !== 8 || ![1, 2, 3, 4, 5, 6, 7, 8].every((n) => numbers.includes(n))) {
+        throw workflowGuard("Storyboard generation did not return the required 8 scenes. Please regenerate.");
+      }
+      break;
+    }
+    case "scene-prompts":
+      if (!Array.isArray(data.prompts) || data.prompts.length === 0) {
+        throw workflowGuard("Scene prompt generation returned no prompts. Please regenerate.");
+      }
+      break;
+    case "scene-image":
+      if (typeof data.generatedImageBase64 !== "string" || !data.generatedImageBase64.trim()) {
+        throw workflowGuard("Scene image generation returned no image. Please regenerate.");
+      }
+      break;
+    default:
+      throw workflowGuard(`Unknown BeatVision generation stage: ${kind}`);
+  }
+
+  return true;
+}
+
 function projectContext(project) {
   const lyrics = (project.lyrics || "").slice(0, 1200);
   const notesSource =
@@ -111,6 +152,7 @@ export async function fetchProviderStatus() {
 export async function generateWorldReport(project) {
   validateGenerationInput("world-report", project);
   const { data } = await client.post("/generate-world-report", projectContext(project));
+  validateGenerationOutput("world-report", data);
   return attachGenerationMetadata(data, "world-report");
 }
 
@@ -120,6 +162,7 @@ export async function generateWorldAssets(project) {
     ...projectContext(project),
     worldReport: project.worldReport,
   });
+  validateGenerationOutput("world-assets", data);
   return attachGenerationMetadata(data, "world-assets");
 }
 
@@ -132,6 +175,7 @@ export async function generateStoryboard(project) {
     characterSheet: project.characterSheet,
     environmentSheet: project.environmentSheet,
   });
+  validateGenerationOutput("storyboard", data);
   return attachGenerationMetadata(data, "storyboard");
 }
 
@@ -145,6 +189,7 @@ export async function generateScenePrompts(project) {
     environmentSheet: project.environmentSheet,
     storyboard: project.storyboardScenes || [],
   });
+  validateGenerationOutput("scene-prompts", data);
   return attachGenerationMetadata(data, "scene-prompts");
 }
 
@@ -179,6 +224,7 @@ export async function generateSceneImage({
     })),
   });
 
+  validateGenerationOutput("scene-image", data);
   return attachGenerationMetadata(
     data,
     "scene-image",
