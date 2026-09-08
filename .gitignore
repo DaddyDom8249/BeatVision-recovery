@@ -30,7 +30,11 @@ next-env.d.ts
 dist/
 dist
 
-# Environment files (comprehensive coverage)
+# Environment files (never commit deployment secrets)
+.env
+.env.*
+!.env.example
+!.env.*.example
 
 *token.json*
 *credentials.json*
