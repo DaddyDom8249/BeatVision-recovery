@@ -41,7 +41,9 @@ def test_frontend_context_does_not_send_reference_pixels_to_text_providers():
 
 def test_frontend_preserves_creative_notes_aliases():
     src = API.read_text()
-    assert "project.notes ?? project.creativeNotes" in src
+    assert "typeof project.notes === \"string\"" in src
+    assert "project.creativeNotes" in src
+    assert "notesSource.slice(0, 500)" in src
 
 
 def test_scene_image_contract_includes_consistency_notes():
