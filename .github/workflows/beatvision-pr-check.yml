@@ -75,6 +75,11 @@ jobs:
           python -m py_compile backend/worker_proxy_server.py
           bash -n scripts/start-worker-backed-local.sh
 
+      - name: Run credential-independent backend contract audit
+        run: |
+          python -m pip install --disable-pip-version-check --no-input pytest
+          python -m pytest backend/tests/test_provider_routing.py -q
+
       - name: Smoke-test local Worker proxy
         run: |
           set -Eeuo pipefail
