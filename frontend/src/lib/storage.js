@@ -286,6 +286,12 @@ export function setGenerationJob(id, kind, patch = {}) {
               : isNewAttempt
                 ? patch.startedAt || null
                 : patch.startedAt || previous?.startedAt || null,
+          finishedAt: isNewAttempt
+            ? patch.finishedAt || null
+            : patch.finishedAt || previous?.finishedAt || null,
+          error: isNewAttempt
+            ? patch.error || null
+            : patch.error || previous?.error || null,
         }),
       },
     };
