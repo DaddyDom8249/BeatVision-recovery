@@ -226,7 +226,7 @@ export default function ProjectWorkflow() {
   // ---------- Handlers ----------
   async function doWorldReport() {
   const kind = "world-report";
-  if (projectRef.current?.generationJobs?.[kind]?.status === "running") return;
+    if (loading.world) return;
   setGenerationJob(project.id, kind, { status: "queued", error: null, finishedAt: null });
   setGenerationJob(project.id, kind, { status: "running", error: null, finishedAt: null });
   setLoad("world", true);
@@ -244,7 +244,7 @@ export default function ProjectWorkflow() {
 
   async function doWorldAssets() {
   const kind = "world-assets";
-  if (projectRef.current?.generationJobs?.[kind]?.status === "running") return;
+    if (loading.assets) return;
   setGenerationJob(project.id, kind, { status: "queued", error: null, finishedAt: null });
   setGenerationJob(project.id, kind, { status: "running", error: null, finishedAt: null });
   setLoad("assets", true);
@@ -263,7 +263,7 @@ export default function ProjectWorkflow() {
 
   async function doStoryboard() {
   const kind = "storyboard";
-  if (projectRef.current?.generationJobs?.[kind]?.status === "running") return;
+    if (loading.story) return;
   setGenerationJob(project.id, kind, { status: "queued", error: null, finishedAt: null });
   setGenerationJob(project.id, kind, { status: "running", error: null, finishedAt: null });
   setLoad("story", true);
@@ -282,7 +282,7 @@ export default function ProjectWorkflow() {
 
   async function doScenePrompts() {
   const kind = "scene-prompts";
-  if (projectRef.current?.generationJobs?.[kind]?.status === "running") return;
+    if (loading.prompts) return;
   setGenerationJob(project.id, kind, { status: "queued", error: null, finishedAt: null });
   setGenerationJob(project.id, kind, { status: "running", error: null, finishedAt: null });
   setLoad("prompts", true);
@@ -382,7 +382,7 @@ export default function ProjectWorkflow() {
 
   async function doGenerateSceneImage(sceneNumber) {
   const kind = `scene-image:${sceneNumber}`;
-  if (projectRef.current?.generationJobs?.[kind]?.status === "running") return;
+    if (loading[`img-${sceneNumber}`]) return;
   if (!imageProviderReady) {
     toast.error(promptGuidedProviderActive ? FREE_TEST_UNAVAILABLE_MESSAGE : GEMINI_UNAVAILABLE_MESSAGE);
     return;
