@@ -4,6 +4,14 @@ import { fileToDataUrl } from "@/lib/storage";
 import { Upload, X, Check, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 
+function createReferenceId() {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+
+  return `reference-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export default function ReferencePhotoUploader({
   photos,
   onChange,
@@ -39,7 +47,7 @@ export default function ReferencePhotoUploader({
         const imageDataUrl = await fileToDataUrl(file);
 
         next.push({
-          id: crypto.randomUUID(),
+          id: createReferenceId(),
           type: "main_character",
           description: "",
           fileName: file.name,
