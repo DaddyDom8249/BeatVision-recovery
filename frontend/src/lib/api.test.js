@@ -1,4 +1,4 @@
-import { attachGenerationMetadata, validateGenerationInput } from "./api";
+import { attachGenerationMetadata, validateGenerationInput, validateGenerationOutput } from "./api";
 
 describe("BeatVision generation contracts", () => {
   test("attaches explicit provider metadata and preserves fallback reason", () => {
@@ -67,5 +67,53 @@ describe("BeatVision generation contracts", () => {
     })).toBe(true);
     expect(validateGenerationInput("scene-prompts", { storyboardApproved: true })).toBe(true);
     expect(validateGenerationInput("scene-image", { scenePrompt: "A cinematic opening shot" })).toBe(true);
+  });
+
+  test("rejects incomplete generation responses before they can be persisted", () => {
+    expect(() => validateGenerationOutput("world-report", { logline: "x" })).toThrow(
+      "Visual World Report generation returned incomplete data. Please regenerate."
+    );
+
+    expect(() => validateGenerationOutput("world-assets", { world_style_bible: {} })).toThrow(
+      "World Assets generation returned incomplete data. Please regenerate."
+    );
+
+    expect(() => validateGenerationOutput("storyboard", { scenes: [] })).toThrow(
+      "Storyboard generation did not return the required 8 scenes. Please regenerate."
+    );
+
+    expect(() => validateGenerationOutput("scene-prompts", { prompts: [] })).toThrow(
+      "Scene prompt generation returned no prompts. Please regenerate."
+    );
+
+    expect(() => validateGenerationOutput("scene-image", { providerName: "test" })).toThrow(
+      "Scene image generation returned no image. Please regenerate."
+    );
+  });
+
+  test("accepts valid workflow generation responses", () => {
+    expect(validateGenerationOutput("world-report", {
+      logline: "A story",
+      visual_world_setting: "A city",
+      seven_story_beats: [],
+    })).toBe(true);
+
+    expect(validateGenerationOutput("world-assets", {
+      world_style_bible: {},
+      character_sheet: {},
+      environment_sheet: {},
+    })).toBe(true);
+
+    expect(validateGenerationOutput("storyboard", {
+      scenes: Array.from({ length: 8 }, (_, i) => ({ scene_number: i + 1 })),
+    })).toBe(true);
+
+    expect(validateGenerationOutput("scene-prompts", {
+      prompts: [{ scene_number: 1, final_polished_prompt: "A shot" }],
+    })).toBe(true);
+
+    expect(validateGenerationOutput("scene-image", {
+      generatedImageBase64: "data:image/png;base64,abc",
+    })).toBe(true);
   });
 });
