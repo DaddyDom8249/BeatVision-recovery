@@ -3,6 +3,7 @@ const STORE_VERSION = 2;
 const REVISION_HISTORY_LIMIT = 8;
 const revisionHistory = new Map();
 const volatileGenerationJobs = new Map();
+const generationPersistenceBaselines = new Map();
 
 function createProjectId() {
   if (globalThis.crypto?.randomUUID) {
@@ -304,25 +305,104 @@ function buildGenerationJob(previous, kind, patch, now) {
   });
 }
 
+function generationPersistenceKey(id, kind) {
+  return `${id}:${kind}`;
+}
+
 export function setGenerationJob(id, kind, patch = {}) {
   const now = new Date().toISOString();
   const current = getProject(id);
   if (!current) return null;
-  const nextJob = buildGenerationJob(current.generationJobs?.[kind] || null, kind, patch, now);
+
+  if (patch.status === "succeeded") {
+    const baseline = generationPersistenceBaselines.get(
+      generationPersistenceKey(id, kind)
+    );
+    const currentRevision = Number.isInteger(current.revision)
+      ? current.revision
+      : 0;
+
+    if (baseline && currentRevision <= baseline.revision) {
+      const failedJob = buildGenerationJob(
+        current.generationJobs?.[kind] || null,
+        kind,
+        {
+          status: "failed",
+          error: "Generated result could not be persisted to browser storage.",
+          finishedAt: now,
+        },
+        now
+      );
+
+      try {
+        return updateProject(id, (project) => ({
+          generationJobs: {
+            ...(project.generationJobs || {}),
+            [kind]: failedJob,
+          },
+        }));
+      } catch (error) {
+        if (!isStorageQuotaError(error)) throw error;
+        const jobs = volatileGenerationJobs.get(id) || {};
+        jobs[kind] = failedJob;
+        volatileGenerationJobs.set(id, jobs);
+        return {
+          ...current,
+          generationJobs: {
+            ...(current.generationJobs || {}),
+            [kind]: failedJob,
+          },
+        };
+      }
+    }
+
+    generationPersistenceBaselines.delete(generationPersistenceKey(id, kind));
+  }
+
+  const nextJob = buildGenerationJob(
+    current.generationJobs?.[kind] || null,
+    kind,
+    patch,
+    now
+  );
 
   try {
-    return updateProject(id, (project) => ({
+    const result = updateProject(id, (project) => ({
       generationJobs: {
         ...(project.generationJobs || {}),
         [kind]: nextJob,
       },
     }));
+
+    if (patch.status === "running" && result) {
+      generationPersistenceBaselines.set(generationPersistenceKey(id, kind), {
+        jobId: nextJob.id,
+        revision: result.revision,
+      });
+    }
+
+    if (patch.status === "queued") {
+      generationPersistenceBaselines.delete(generationPersistenceKey(id, kind));
+    }
+
+    return result;
   } catch (error) {
     if (!isStorageQuotaError(error)) throw error;
 
     const jobs = volatileGenerationJobs.get(id) || {};
     jobs[kind] = nextJob;
     volatileGenerationJobs.set(id, jobs);
+
+    if (patch.status === "running") {
+      generationPersistenceBaselines.set(generationPersistenceKey(id, kind), {
+        jobId: nextJob.id,
+        revision: current.revision || 0,
+      });
+    }
+
+    if (patch.status === "queued") {
+      generationPersistenceBaselines.delete(generationPersistenceKey(id, kind));
+    }
 
     console.warn(
       "Generation job state is using volatile memory because browser storage is full."
@@ -344,6 +424,9 @@ export function deleteProject(id) {
   );
   revisionHistory.delete(id);
   volatileGenerationJobs.delete(id);
+  for (const key of generationPersistenceBaselines.keys()) {
+    if (key.startsWith(`${id}:`)) generationPersistenceBaselines.delete(key);
+  }
   return saveProjects(projects);
 }
 
