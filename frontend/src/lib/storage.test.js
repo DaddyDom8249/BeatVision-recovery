@@ -6,11 +6,13 @@ import {
   setGenerationJob,
   newProject,
   upsertProject,
+  deleteProject,
 } from "./storage";
 
 describe("BeatVision project persistence", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    window.sessionStorage.clear();
   });
 
   test("migrates the legacy project array into the versioned store", () => {
@@ -44,6 +46,61 @@ describe("BeatVision project persistence", () => {
     expect(updated.title).toBe("Revision Test Updated");
     expect(updated.revision).toBe(1);
     expect(getProject(project.id).title).toBe("Revision Test Updated");
+  });
+
+  test("keeps scene image payloads out of localStorage and restores them from session storage", () => {
+    const project = newProject({ title: "Scene Image Storage" });
+    const sceneImage = {
+      sourceType: "generated_from_reference",
+      imageDataUrl: "data:image/png;base64," + "A".repeat(5000),
+      approved: true,
+      providerName: "Test Provider",
+      generatedAt: "2026-09-08T12:00:00.000Z",
+      referencePhotoIdsUsed: ["ref-1"],
+    };
+
+    saveProjects([
+      {
+        ...project,
+        sceneImages: { "1": sceneImage },
+      },
+    ]);
+
+    const localStore = window.localStorage.getItem("beatvision.projects.v1");
+    const sessionStore = window.sessionStorage.getItem(
+      `beatvision.scene-images.v1:${project.id}`
+    );
+
+    expect(localStore).not.toContain(sceneImage.imageDataUrl);
+    expect(localStore).toContain('"hasImageData":true');
+    expect(sessionStore).toContain(sceneImage.imageDataUrl);
+    expect(getProject(project.id).sceneImages["1"]).toEqual(sceneImage);
+  });
+
+  test("deletes a project's session scene images with the project", () => {
+    const project = newProject({ title: "Delete Scene Images" });
+    saveProjects([
+      {
+        ...project,
+        sceneImages: {
+          "1": {
+            imageDataUrl: "data:image/png;base64,test",
+            approved: true,
+          },
+        },
+      },
+    ]);
+
+    expect(
+      window.sessionStorage.getItem(`beatvision.scene-images.v1:${project.id}`)
+    ).toBeTruthy();
+
+    deleteProject(project.id);
+
+    expect(
+      window.sessionStorage.getItem(`beatvision.scene-images.v1:${project.id}`)
+    ).toBeNull();
+    expect(getProject(project.id)).toBeNull();
   });
 
   test("preserves generation job records through normalization", () => {
