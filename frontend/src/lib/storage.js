@@ -2,6 +2,7 @@ const KEY = "beatvision.projects.v1";
 const STORE_VERSION = 2;
 const REVISION_HISTORY_LIMIT = 8;
 const revisionHistory = new Map();
+const volatileGenerationJobs = new Map();
 
 function createProjectId() {
   if (globalThis.crypto?.randomUUID) {
@@ -169,8 +170,22 @@ export function saveProjects(projects) {
   }
 }
 
+function mergeVolatileGenerationJobs(project) {
+  const volatileJobs = volatileGenerationJobs.get(project?.id);
+  if (!project || !volatileJobs) return project;
+
+  return normalizeProject({
+    ...project,
+    generationJobs: {
+      ...(project.generationJobs || {}),
+      ...volatileJobs,
+    },
+  });
+}
+
 export function getProject(id) {
-  return loadProjects().find((project) => project.id === id) || null;
+  const project = loadProjects().find((project) => project.id === id) || null;
+  return mergeVolatileGenerationJobs(project);
 }
 
 function rememberRevision(project) {
@@ -257,45 +272,70 @@ export function updateProject(id, updater) {
   return upsertProject({ ...current, ...candidate, id: current.id });
 }
 
+function buildGenerationJob(previous, kind, patch, now) {
+  const isNewAttempt = patch.status === "queued";
+  const attempt = isNewAttempt
+    ? (Number.isInteger(previous?.attempt) ? previous.attempt : 0) + 1
+    : (Number.isInteger(previous?.attempt) ? previous.attempt : 1);
+
+  return normalizeJob({
+    ...(previous || {}),
+    id: isNewAttempt
+      ? `${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      : previous?.id || `${kind}-${Date.now()}`,
+    kind,
+    ...patch,
+    attempt,
+    queuedAt: isNewAttempt
+      ? patch.queuedAt || now
+      : previous?.queuedAt || patch.queuedAt || now,
+    startedAt:
+      patch.status === "running"
+        ? patch.startedAt || previous?.startedAt || now
+        : isNewAttempt
+          ? patch.startedAt || null
+          : patch.startedAt || previous?.startedAt || null,
+    finishedAt: isNewAttempt
+      ? patch.finishedAt || null
+      : patch.finishedAt || previous?.finishedAt || null,
+    error: isNewAttempt
+      ? patch.error || null
+      : patch.error || previous?.error || null,
+  });
+}
+
 export function setGenerationJob(id, kind, patch = {}) {
   const now = new Date().toISOString();
-  return updateProject(id, (project) => {
-    const previous = project.generationJobs?.[kind] || null;
-    const isNewAttempt = patch.status === "queued";
-    const attempt = isNewAttempt
-      ? (Number.isInteger(previous?.attempt) ? previous.attempt : 0) + 1
-      : (Number.isInteger(previous?.attempt) ? previous.attempt : 1);
+  const current = getProject(id);
+  if (!current) return null;
+  const nextJob = buildGenerationJob(current.generationJobs?.[kind] || null, kind, patch, now);
 
-    return {
+  try {
+    return updateProject(id, (project) => ({
       generationJobs: {
         ...(project.generationJobs || {}),
-        [kind]: normalizeJob({
-          ...(previous || {}),
-          id: isNewAttempt
-            ? `${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-            : previous?.id || `${kind}-${Date.now()}`,
-          kind,
-          ...patch,
-          attempt,
-          queuedAt: isNewAttempt
-            ? patch.queuedAt || now
-            : previous?.queuedAt || patch.queuedAt || now,
-          startedAt:
-            patch.status === "running"
-              ? patch.startedAt || previous?.startedAt || now
-              : isNewAttempt
-                ? patch.startedAt || null
-                : patch.startedAt || previous?.startedAt || null,
-          finishedAt: isNewAttempt
-            ? patch.finishedAt || null
-            : patch.finishedAt || previous?.finishedAt || null,
-          error: isNewAttempt
-            ? patch.error || null
-            : patch.error || previous?.error || null,
-        }),
+        [kind]: nextJob,
+      },
+    }));
+  } catch (error) {
+    if (!isStorageQuotaError(error)) throw error;
+
+    const jobs = volatileGenerationJobs.get(id) || {};
+    jobs[kind] = nextJob;
+    volatileGenerationJobs.set(id, jobs);
+
+    console.warn(
+      "Generation job state is using volatile memory because browser storage is full."
+    );
+
+    return {
+      ...current,
+      generationJobs: {
+        ...(current.generationJobs || {}),
+        [kind]: nextJob,
       },
     };
-  });
+  }
 }
 
 export function deleteProject(id) {
@@ -303,6 +343,7 @@ export function deleteProject(id) {
     (project) => project.id !== id
   );
   revisionHistory.delete(id);
+  volatileGenerationJobs.delete(id);
   return saveProjects(projects);
 }
 
