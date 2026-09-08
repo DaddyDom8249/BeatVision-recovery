@@ -1,4 +1,5 @@
 import axios from "axios";
+import { attachGenerationMetadata } from "./generationMetadata";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const IMAGE_TEST_URL = process.env.REACT_APP_IMAGE_TEST_URL || "";
@@ -6,20 +7,10 @@ const IMAGE_TEST_URL = process.env.REACT_APP_IMAGE_TEST_URL || "";
 export const API = `${BACKEND_URL}/api`;
 const IMAGE_API = IMAGE_TEST_URL ? `${IMAGE_TEST_URL}/api` : API;
 
-const client = axios.create({
-  baseURL: API,
-  timeout: 120000,
-});
-
-const imageClient = axios.create({
-  baseURL: IMAGE_API,
-  timeout: 210000,
-});
+const client = axios.create({ baseURL: API, timeout: 120000 });
+const imageClient = axios.create({ baseURL: IMAGE_API, timeout: 210000 });
 
 let imageTestAvailable = Boolean(IMAGE_TEST_URL);
-
-const TEXT_PROVIDER = "Anthropic Claude Sonnet 4.5 (via Emergent)";
-const FALLBACK_PROVIDER = "BeatVision deterministic fallback";
 
 function workflowGuard(message) {
   const error = new Error(message);
@@ -66,49 +57,9 @@ export function validateGenerationInput(kind, project) {
   return true;
 }
 
-function generationMetadata(data, kind, providerOverride = null) {
-  const fallback = Boolean(data?._fallback);
-  return {
-    kind,
-    provider:
-      providerOverride ||
-      data?.providerName ||
-      data?.provider ||
-      (fallback ? FALLBACK_PROVIDER : TEXT_PROVIDER),
-    mode: fallback ? "fallback" : "provider",
-    fallback,
-    fallbackReason: data?._fallback_reason || null,
-    generatedAt: new Date().toISOString(),
-  };
-}
-
-export function attachGenerationMetadata(data, kind, providerOverride = null) {
-  if (!data || typeof data !== "object") return data;
-  const metadata = generationMetadata(data, kind, providerOverride);
-  const next = { ...data, _generation: metadata };
-
-  if (kind === "world-assets") {
-    for (const key of ["world_style_bible", "character_sheet", "environment_sheet"]) {
-      if (next[key] && typeof next[key] === "object") {
-        next[key] = { ...next[key], _generation: metadata };
-      }
-    }
-  }
-
-  if (kind === "storyboard" && Array.isArray(next.scenes)) {
-    next.scenes = next.scenes.map((scene) => ({ ...scene, _generation: metadata }));
-  }
-
-  if (kind === "scene-prompts" && Array.isArray(next.prompts)) {
-    next.prompts = next.prompts.map((prompt) => ({ ...prompt, _generation: metadata }));
-  }
-
-  return next;
-}
-
 function projectContext(project) {
   const lyrics = (project.lyrics || "").slice(0, 1200);
-  const notes = (project.notes || "").slice(0, 500);
+  const notes = (project.notes ?? project.creativeNotes ?? "").slice(0, 500);
 
   return {
     title: (project.title || "").slice(0, 120),
@@ -127,7 +78,6 @@ function projectContext(project) {
 
 export async function fetchProviderStatus() {
   const { data: primaryStatus } = await client.get("/provider-status");
-
   if (!IMAGE_TEST_URL) {
     imageTestAvailable = false;
     return primaryStatus;
@@ -136,12 +86,9 @@ export async function fetchProviderStatus() {
   try {
     const { data: imageStatus } = await imageClient.get("/provider-status");
     imageTestAvailable = true;
-
     return {
       ...primaryStatus,
-      image_generation:
-        imageStatus.image_generation ||
-        primaryStatus.image_generation,
+      image_generation: imageStatus.image_generation || primaryStatus.image_generation,
       reference_photo_image_generation:
         imageStatus.reference_photo_image_generation ||
         primaryStatus.reference_photo_image_generation,
@@ -155,10 +102,7 @@ export async function fetchProviderStatus() {
 
 export async function generateWorldReport(project) {
   validateGenerationInput("world-report", project);
-  const { data } = await client.post(
-    "/generate-world-report",
-    projectContext(project)
-  );
+  const { data } = await client.post("/generate-world-report", projectContext(project));
   return attachGenerationMetadata(data, "world-report");
 }
 
@@ -207,12 +151,8 @@ export async function generateSceneImage({
   referenceImages,
 }) {
   validateGenerationInput("scene-image", { scenePrompt });
-  const useImageTestProvider = Boolean(
-    IMAGE_TEST_URL && imageTestAvailable
-  );
-  const selectedClient = useImageTestProvider
-    ? imageClient
-    : client;
+  const useImageTestProvider = Boolean(IMAGE_TEST_URL && imageTestAvailable);
+  const selectedClient = useImageTestProvider ? imageClient : client;
 
   const { data } = await selectedClient.post("/generate-scene-image", {
     projectId,
@@ -220,18 +160,14 @@ export async function generateSceneImage({
     scenePrompt,
     stylePreset,
     negativePrompt: negativePrompt || "",
-    characterConsistencyNotes:
-      characterConsistencyNotes || "",
-    environmentConsistencyNotes:
-      environmentConsistencyNotes || "",
+    characterConsistencyNotes: characterConsistencyNotes || "",
+    environmentConsistencyNotes: environmentConsistencyNotes || "",
     referenceImages: (referenceImages || []).map((reference) => ({
       id: reference.id,
       type: reference.type,
       description: reference.description || "",
       fileName: reference.fileName || "",
-      imageDataUrl: useImageTestProvider
-        ? undefined
-        : reference.imageDataUrl,
+      imageDataUrl: useImageTestProvider ? undefined : reference.imageDataUrl,
     })),
   });
 
