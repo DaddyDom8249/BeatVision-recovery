@@ -64,6 +64,7 @@ describe("BeatVision project persistence", () => {
     const stored = getProject(project.id);
     expect(stored.generationJobs.storyboard.id).toBe("storyboard");
     expect(stored.generationJobs.storyboard.status).toBe("running");
+    expect(stored.generationJobs.storyboard.attempt).toBe(1);
   });
 
   test("persists generation job transitions without replacing the project", () => {
@@ -77,6 +78,8 @@ describe("BeatVision project persistence", () => {
       error: null,
     });
     expect(queued.generationJobs.storyboard.status).toBe("queued");
+    expect(queued.generationJobs.storyboard.attempt).toBe(1);
+    expect(queued.generationJobs.storyboard.queuedAt).toBeTruthy();
 
     const running = setGenerationJob(project.id, "storyboard", {
       status: "running",
@@ -85,6 +88,8 @@ describe("BeatVision project persistence", () => {
     expect(running.generationJobs.storyboard.id).toBe(
       queued.generationJobs.storyboard.id
     );
+    expect(running.generationJobs.storyboard.attempt).toBe(1);
+    expect(running.generationJobs.storyboard.startedAt).toBeTruthy();
 
     const finished = setGenerationJob(project.id, "storyboard", {
       status: "succeeded",
@@ -98,6 +103,41 @@ describe("BeatVision project persistence", () => {
     expect(getProject(project.id).generationJobs.storyboard.status).toBe(
       "succeeded"
     );
+  });
+
+  test("starts a new generation attempt with a new job id", () => {
+    const project = newProject({ title: "Retry Lifecycle" });
+    saveProjects([project]);
+
+    const first = setGenerationJob(project.id, "world-report", {
+      status: "queued",
+    });
+    const firstRunning = setGenerationJob(project.id, "world-report", {
+      status: "running",
+    });
+    const failed = setGenerationJob(project.id, "world-report", {
+      status: "failed",
+      error: "temporary provider failure",
+      finishedAt: "2026-09-07T12:00:10.000Z",
+    });
+
+    const retry = setGenerationJob(project.id, "world-report", {
+      status: "queued",
+    });
+
+    expect(first.generationJobs["world-report"].attempt).toBe(1);
+    expect(firstRunning.generationJobs["world-report"].id).toBe(
+      first.generationJobs["world-report"].id
+    );
+    expect(failed.generationJobs["world-report"].status).toBe("failed");
+    expect(retry.generationJobs["world-report"].status).toBe("queued");
+    expect(retry.generationJobs["world-report"].attempt).toBe(2);
+    expect(retry.generationJobs["world-report"].id).not.toBe(
+      first.generationJobs["world-report"].id
+    );
+    expect(retry.generationJobs["world-report"].startedAt).toBeNull();
+    expect(retry.generationJobs["world-report"].finishedAt).toBeNull();
+    expect(retry.generationJobs["world-report"].error).toBeNull();
   });
 
   test("merges a stale workflow snapshot without erasing newer fields", () => {
