@@ -225,8 +225,12 @@ export function saveProjects(projects) {
     : [];
 
   for (const project of normalized) {
-    if (!hasInlineSceneImages(project.sceneImages)) continue;
-    writeSessionSceneImages(project.id, project.sceneImages);
+    const sceneImages = project.sceneImages || {};
+    if (Object.keys(sceneImages).length === 0) {
+      removeSessionSceneImages(project.id);
+    } else if (hasInlineSceneImages(sceneImages)) {
+      writeSessionSceneImages(project.id, sceneImages);
+    }
   }
 
   try {
