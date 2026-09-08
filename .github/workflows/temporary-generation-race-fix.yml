@@ -1,0 +1,76 @@
+name: Temporary generation race repair
+
+on:
+  push:
+    branches: [audit-stabilization]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: ${{ !contains(github.event.head_commit.message, '[generation-race-repair]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: audit-stabilization
+          fetch-depth: 0
+      - name: Patch generation handlers
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('frontend/src/pages/ProjectWorkflow.jsx')
+          text = path.read_text()
+
+          helper = '''  function isCurrentGenerationAttempt(kind, jobId) {\n    const current = getProject(project.id);\n    return Boolean(\n      jobId && current?.generationJobs?.[kind]?.id === jobId\n    );\n  }\n\n'''
+          marker = '  // ---------- Handlers ----------\n'
+          if 'function isCurrentGenerationAttempt(' not in text:
+              text = text.replace(marker, helper + marker, 1)
+
+          replacements = {
+          '''  setGenerationJob(project.id, kind, { status: "queued", error: null, finishedAt: null });\n  setGenerationJob(project.id, kind, { status: "running", error: null, finishedAt: null });''': '''  const queuedJob = setGenerationJob(project.id, kind, { status: "queued", error: null, finishedAt: null });\n  const jobId = queuedJob?.generationJobs?.[kind]?.id || null;\n  setGenerationJob(project.id, kind, { status: "running", error: null, finishedAt: null });''',
+          }
+          count = text.count(next(iter(replacements)))
+          if count != 5:
+              raise SystemExit(f'Expected 5 generation queue pairs, found {count}')
+          text = text.replace(next(iter(replacements)), next(iter(replacements.values())))
+
+          # Guard every generated-data commit and terminal job update against a newer attempt.
+          persist_targets = [
+              '    persist({ worldReport: report, worldReportApproved: false });',
+              '    persist({ styleBible: data.world_style_bible, characterSheet: data.character_sheet, environmentSheet: data.environment_sheet, worldAssetsFallback: fb, styleBibleApproved: false, characterSheetApproved: false, environmentSheetApproved: false });',
+              '    persist({ storyboardScenes: data.scenes, storyboardFallback: fb, storyboardApproved: false, sceneReferencePhotoIds: {}, scenePrompts: null, scenePromptsFallback: null, scenePromptsApproved: false, sceneImages: {}, motionPlan: null });',
+              '    persist({ scenePrompts: data.prompts, scenePromptsFallback: fb, scenePromptsApproved: false });',
+              '    persist({ sceneImages });',
+          ]
+          guards = [
+              '    if (!isCurrentGenerationAttempt(kind, jobId)) return;\n',
+              '    if (!isCurrentGenerationAttempt(kind, jobId)) return;\n',
+              '    if (!isCurrentGenerationAttempt(kind, jobId)) return;\n',
+              '    if (!isCurrentGenerationAttempt(kind, jobId)) return;\n',
+              '    if (!isCurrentGenerationAttempt(kind, jobId)) return;\n',
+          ]
+          for target, guard in zip(persist_targets, guards):
+              if target not in text:
+                  raise SystemExit(f'Missing persist target: {target[:80]}')
+              text = text.replace(target, guard + target, 1)
+
+          # Insert the same guard before each terminal success/failure update.
+          success = '    setGenerationJob(project.id, kind, { status: "succeeded", error: null, finishedAt: new Date().toISOString() });'
+          failure = '    setGenerationJob(project.id, kind, { status: "failed", error, finishedAt: new Date().toISOString() });'
+          if text.count(success) != 5 or text.count(failure) != 5:
+              raise SystemExit(f'Unexpected terminal update counts: success={text.count(success)}, failure={text.count(failure)}')
+          text = text.replace(success, '    if (!isCurrentGenerationAttempt(kind, jobId)) return;\n' + success)
+          text = text.replace(failure, '    if (!isCurrentGenerationAttempt(kind, jobId)) return;\n' + failure)
+
+          path.write_text(text)
+      - name: Commit repair
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/src/pages/ProjectWorkflow.jsx
+          git diff --cached --check
+          git commit -m "Guard generation results by attempt [generation-race-repair]"
+          git push origin audit-stabilization
