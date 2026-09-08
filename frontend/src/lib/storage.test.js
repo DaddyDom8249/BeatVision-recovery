@@ -91,6 +91,13 @@ describe("BeatVision project persistence", () => {
     expect(running.generationJobs.storyboard.attempt).toBe(1);
     expect(running.generationJobs.storyboard.startedAt).toBeTruthy();
 
+    // Simulate the generated storyboard being successfully persisted before
+    // the job is allowed to transition to succeeded.
+    upsertProject({
+      ...running,
+      storyboardScenes: [{ scene_number: 1, title: "Persisted Scene" }],
+    });
+
     const finished = setGenerationJob(project.id, "storyboard", {
       status: "succeeded",
       finishedAt: "2026-09-07T12:00:10.000Z",
@@ -105,7 +112,7 @@ describe("BeatVision project persistence", () => {
     );
   });
 
-  test("keeps generation job lifecycle usable when browser storage is full", () => {
+  test("marks generation failed when the generated result cannot be persisted", () => {
     const project = newProject({ title: "Quota Lifecycle" });
     saveProjects([project]);
 
@@ -130,9 +137,12 @@ describe("BeatVision project persistence", () => {
 
       expect(queued.generationJobs["scene-image:1"].status).toBe("queued");
       expect(running.generationJobs["scene-image:1"].status).toBe("running");
-      expect(finished.generationJobs["scene-image:1"].status).toBe("succeeded");
+      expect(finished.generationJobs["scene-image:1"].status).toBe("failed");
+      expect(
+        finished.generationJobs["scene-image:1"].error
+      ).toBe("Generated result could not be persisted to browser storage.");
       expect(getProject(project.id).generationJobs["scene-image:1"].status).toBe(
-        "succeeded"
+        "failed"
       );
       expect(
         getProject(project.id).generationJobs["scene-image:1"].id
