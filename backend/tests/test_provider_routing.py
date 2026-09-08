@@ -61,3 +61,10 @@ def test_generation_metadata_contract():
     assert "environment_sheet" in src
     assert "next.scenes.map" in src
     assert "next.prompts.map" in src
+
+
+def test_backend_cors_does_not_pair_wildcard_origins_with_credentials():
+    src = SERVER.read_text()
+    assert "allow_all_origins = cors_origins == [\"*\"]" in src
+    assert "allow_credentials=not allow_all_origins" in src
+    assert "allow_origins=cors_origins" in src
