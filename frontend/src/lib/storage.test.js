@@ -105,6 +105,43 @@ describe("BeatVision project persistence", () => {
     );
   });
 
+  test("keeps generation job lifecycle usable when browser storage is full", () => {
+    const project = newProject({ title: "Quota Lifecycle" });
+    saveProjects([project]);
+
+    const originalSetItem = window.localStorage.setItem;
+    const quotaError = new Error("quota exceeded");
+    quotaError.name = "QuotaExceededError";
+    window.localStorage.setItem = jest.fn(() => {
+      throw quotaError;
+    });
+
+    try {
+      const queued = setGenerationJob(project.id, "scene-image:1", {
+        status: "queued",
+      });
+      const running = setGenerationJob(project.id, "scene-image:1", {
+        status: "running",
+      });
+      const finished = setGenerationJob(project.id, "scene-image:1", {
+        status: "succeeded",
+        finishedAt: "2026-09-07T12:00:10.000Z",
+      });
+
+      expect(queued.generationJobs["scene-image:1"].status).toBe("queued");
+      expect(running.generationJobs["scene-image:1"].status).toBe("running");
+      expect(finished.generationJobs["scene-image:1"].status).toBe("succeeded");
+      expect(getProject(project.id).generationJobs["scene-image:1"].status).toBe(
+        "succeeded"
+      );
+      expect(
+        getProject(project.id).generationJobs["scene-image:1"].id
+      ).toBe(queued.generationJobs["scene-image:1"].id);
+    } finally {
+      window.localStorage.setItem = originalSetItem;
+    }
+  });
+
   test("starts a new generation attempt with a new job id", () => {
     const project = newProject({ title: "Retry Lifecycle" });
     saveProjects([project]);
