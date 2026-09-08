@@ -1,0 +1,149 @@
+name: BeatVision persistence repair runner
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout audit branch
+        uses: actions/checkout@v4
+        with:
+          ref: audit-stabilization
+          persist-credentials: true
+
+      - name: Apply repair
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # Add the IndexedDB-backed scene image store.
+          Path('frontend/src/lib/sceneImageStorage.js').write_text(r'''const DB_NAME = "beatvision.scene-images.v1";
+const STORE_NAME = "projects";
+
+function canUseIndexedDb() {
+  return typeof indexedDB !== "undefined";
+}
+
+function openDatabase() {
+  if (!canUseIndexedDb()) return Promise.resolve(null);
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: "projectId" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("Unable to open scene image storage."));
+  });
+}
+
+export async function loadSceneImages(projectId) {
+  const db = await openDatabase();
+  if (!db) return null;
+  try {
+    return await new Promise((resolve, reject) => {
+      const request = db.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).get(projectId);
+      request.onsuccess = () => resolve(request.result?.sceneImages || null);
+      request.onerror = () => reject(request.error || new Error("Unable to load scene images."));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+export async function saveSceneImages(projectId, sceneImages) {
+  const db = await openDatabase();
+  if (!db) return false;
+  try {
+    await new Promise((resolve, reject) => {
+      const request = db.transaction(STORE_NAME, "readwrite").objectStore(STORE_NAME).put({
+        projectId,
+        sceneImages: sceneImages || {},
+      });
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error || new Error("Unable to save scene images."));
+    });
+    return true;
+  } finally {
+    db.close();
+  }
+}
+''')
+
+          # Modify ProjectWorkflow in-place with exact anchors from the current branch.
+          workflow = Path('frontend/src/pages/ProjectWorkflow.jsx')
+          text = workflow.read_text()
+
+          old = 'import { getProject, upsertProject, setGenerationJob, fileToDataUrl, StorageQuotaError } from "@/lib/storage";'
+          new = old + '\nimport { loadSceneImages, saveSceneImages } from "@/lib/sceneImageStorage";'
+          if old not in text:
+              raise SystemExit('ProjectWorkflow import anchor not found')
+          text = text.replace(old, new, 1)
+
+          old = '''  useEffect(() => {\n    const p = getProject(id);\n    if (!p) {\n      toast.error("Project not found");\n      nav("/dashboard");\n      return;\n    }\n    projectRef.current = p;\n    setProject(p);\n    fetchProviderStatus()\n      .then(setProviderStatus)\n      .catch(() => setProviderStatus(null));\n  }, [id, nav]);'''
+          new = '''  useEffect(() => {\n    let cancelled = false;\n    const p = getProject(id);\n    if (!p) {\n      toast.error("Project not found");\n      nav("/dashboard");\n      return undefined;\n    }\n    projectRef.current = p;\n    setProject(p);\n\n    (async () => {\n      try {\n        const storedSceneImages = await loadSceneImages(id);\n        if (cancelled) return;\n        const localSceneImages = p.sceneImages || {};\n        const hasInlineImages = Object.values(localSceneImages).some(\n          (entry) => typeof entry?.imageDataUrl === "string" && entry.imageDataUrl\n        );\n        if (storedSceneImages && Object.keys(storedSceneImages).length > 0) {\n          const hydrated = { ...p, sceneImages: storedSceneImages };\n          projectRef.current = hydrated;\n          setProject(hydrated);\n        } else if (hasInlineImages) {\n          const savedToIndexedDb = await saveSceneImages(id, localSceneImages);\n          if (cancelled) return;\n          const migrated = upsertProject({\n            ...p,\n            sceneImages: savedToIndexedDb ? sceneImageManifest(localSceneImages) : localSceneImages,\n          });\n          const hydrated = { ...migrated, sceneImages: localSceneImages };\n          projectRef.current = hydrated;\n          setProject(hydrated);\n        }\n      } catch (error) {\n        console.error("Scene image hydration failed", error);\n      }\n    })();\n\n    fetchProviderStatus()\n      .then((status) => { if (!cancelled) setProviderStatus(status); })\n      .catch(() => { if (!cancelled) setProviderStatus(null); });\n\n    return () => { cancelled = true; };\n  }, [id, nav]);'''
+          if old not in text:
+              raise SystemExit('ProjectWorkflow effect anchor not found')
+          text = text.replace(old, new, 1)
+
+          old = '''  function persist(patch) {\n    const current = projectRef.current || project;\n    if (!current) return;\n\n    const next = { ...current, ...patch };\n\n    projectRef.current = next;\n    setProject(next);\n\n    try {\n      upsertProject(next);\n    } catch (error) {'''
+          new = '''  function sceneImageManifest(sceneImages) {\n    return Object.fromEntries(\n      Object.entries(sceneImages || {}).map(([key, entry]) => {\n        if (!entry || typeof entry !== "object") return [key, entry];\n        const { imageDataUrl, ...metadata } = entry;\n        return [key, { ...metadata, hasImageData: Boolean(imageDataUrl) }];\n      })\n    );\n  }\n\n  async function persist(patch) {\n    const current = projectRef.current || project;\n    if (!current) return false;\n\n    const hasSceneImages = Object.prototype.hasOwnProperty.call(patch, "sceneImages");\n    let persistedPatch = patch;\n\n    try {\n      if (hasSceneImages) {\n        const savedToIndexedDb = await saveSceneImages(current.id, patch.sceneImages || {});\n        persistedPatch = savedToIndexedDb\n          ? { ...patch, sceneImages: sceneImageManifest(patch.sceneImages) }\n          : patch;\n      }\n\n      const saved = upsertProject({ ...current, ...persistedPatch });\n      const visible = hasSceneImages\n        ? { ...saved, sceneImages: patch.sceneImages || {} }\n        : saved;\n      projectRef.current = visible;\n      setProject(visible);\n      return true;\n    } catch (error) {'''
+          if old not in text:
+              raise SystemExit('ProjectWorkflow persist anchor not found')
+          text = text.replace(old, new, 1)
+
+          old = '''      } else {\n        toast.error(\n          "The latest project change could not be saved to browser storage."\n        );\n      }\n    }\n  }'''
+          new = '''      } else {\n        toast.error(\n          "The latest project change could not be saved to browser storage."\n        );\n      }\n      return false;\n    }\n  }'''
+          if old not in text:
+              raise SystemExit('ProjectWorkflow persist tail anchor not found')
+          text = text.replace(old, new, 1)
+          workflow.write_text(text)
+
+          # Keep large scene image payloads out of localStorage when IndexedDB is available.
+          storage = Path('frontend/src/lib/storage.js')
+          s = storage.read_text()
+          marker = 'export function normalizeProject(project) {'
+          helper = '''function sceneImageManifest(sceneImages) {\n  return Object.fromEntries(\n    Object.entries(sceneImages || {}).map(([key, entry]) => {\n      if (!entry || typeof entry !== "object") return [key, entry];\n      const { imageDataUrl, ...metadata } = entry;\n      return [key, { ...metadata, hasImageData: Boolean(imageDataUrl) }];\n    })\n  );\n}\n\n'''
+          if marker not in s:
+              raise SystemExit('storage normalize marker not found')
+          if helper not in s:
+              s = s.replace(marker, helper + marker, 1)
+
+          old = '''  const normalized = Array.isArray(projects)\n    ? projects.map(normalizeProject).filter(Boolean)\n    : [];'''
+          new = '''  const normalized = Array.isArray(projects)\n    ? projects.map(normalizeProject).filter(Boolean)\n    : [];\n  const persisted = normalized.map((project) => ({\n    ...project,\n    sceneImages: sceneImageManifest(project.sceneImages),\n  }));'''
+          if old not in s:
+              raise SystemExit('storage saveProjects anchor not found')
+          s = s.replace(old, new, 1)
+          old_json = 'JSON.stringify({ version: STORE_VERSION, projects: normalized })'
+          if old_json not in s:
+              raise SystemExit('storage JSON anchor not found')
+          s = s.replace(old_json, 'JSON.stringify({ version: STORE_VERSION, projects: persisted })', 1)
+          storage.write_text(s)
+
+          # Remove this temporary runner from the audit branch before committing.
+          temp = Path('.github/workflows/repair-persistence.yml')
+          if temp.exists(): temp.unlink()
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/src/lib/storage.js frontend/src/lib/sceneImageStorage.js frontend/src/pages/ProjectWorkflow.jsx .github/workflows/repair-persistence.yml
+          git commit -m "Persist scene images outside localStorage [repair]"
+          git push origin HEAD:audit-stabilization
+
+          # Remove the temporary runner from main.
+          git fetch origin main
+          git checkout -B cleanup-main origin/main
+          git rm .github/workflows/repair-persistence.yml
+          git commit -m "Remove temporary persistence repair runner"
+          git push origin HEAD:main
