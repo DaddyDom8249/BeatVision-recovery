@@ -29,6 +29,8 @@ function normalizeJob(job) {
     status: ["queued", "running", "succeeded", "failed", "cancelled"].includes(job.status)
       ? job.status
       : "failed",
+    attempt: Number.isInteger(job.attempt) && job.attempt > 0 ? job.attempt : 1,
+    queuedAt: job.queuedAt || null,
     startedAt: job.startedAt || null,
     finishedAt: job.finishedAt || null,
     error: job.error || null,
@@ -255,20 +257,39 @@ export function updateProject(id, updater) {
   return upsertProject({ ...current, ...candidate, id: current.id });
 }
 
-export function setGenerationJob(id, kind, patch) {
+export function setGenerationJob(id, kind, patch = {}) {
   const now = new Date().toISOString();
-  return updateProject(id, (project) => ({
-    generationJobs: {
-      ...(project.generationJobs || {}),
-      [kind]: normalizeJob({
-        ...(project.generationJobs?.[kind] || {}),
-        id: project.generationJobs?.[kind]?.id || `${kind}-${Date.now()}`,
-        kind,
-        ...patch,
-        startedAt: patch?.startedAt || project.generationJobs?.[kind]?.startedAt || now,
-      }),
-    },
-  }));
+  return updateProject(id, (project) => {
+    const previous = project.generationJobs?.[kind] || null;
+    const isNewAttempt = patch.status === "queued";
+    const attempt = isNewAttempt
+      ? (Number.isInteger(previous?.attempt) ? previous.attempt : 0) + 1
+      : (Number.isInteger(previous?.attempt) ? previous.attempt : 1);
+
+    return {
+      generationJobs: {
+        ...(project.generationJobs || {}),
+        [kind]: normalizeJob({
+          ...(previous || {}),
+          id: isNewAttempt
+            ? `${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+            : previous?.id || `${kind}-${Date.now()}`,
+          kind,
+          ...patch,
+          attempt,
+          queuedAt: isNewAttempt
+            ? patch.queuedAt || now
+            : previous?.queuedAt || patch.queuedAt || now,
+          startedAt:
+            patch.status === "running"
+              ? patch.startedAt || previous?.startedAt || now
+              : isNewAttempt
+                ? patch.startedAt || null
+                : patch.startedAt || previous?.startedAt || null,
+        }),
+      },
+    };
+  });
 }
 
 export function deleteProject(id) {
