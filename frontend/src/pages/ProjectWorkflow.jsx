@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { getProject, upsertProject, fileToDataUrl, StorageQuotaError } from "@/lib/storage";
+import { getProject, upsertProject, setGenerationJob, fileToDataUrl, StorageQuotaError } from "@/lib/storage";
 import { styleLabel, refTypeLabel, REFERENCE_TYPES } from "@/lib/constants";
 import {
   generateWorldReport,
@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 
 // ----------- Helpers -----------
+// BEATVISION_GENERATION_JOBS_WIRED
 const FALLBACK_REASON_LABELS = {
   budget_exceeded: "LLM budget exceeded",
   timeout: "LLM timed out",
@@ -224,93 +225,81 @@ export default function ProjectWorkflow() {
 
   // ---------- Handlers ----------
   async function doWorldReport() {
-    setLoad("world", true);
-    try {
-      const report = await generateWorldReport(project);
-      persist({ worldReport: report, worldReportApproved: false });
-      toast.success("Visual World Report generated");
-    } catch (e) {
-      toast.error(e.response?.data?.detail || e.message || "Failed to generate report");
-    } finally {
-      setLoad("world", false);
-    }
-  }
+  const kind = "world-report";
+  if (projectRef.current?.generationJobs?.[kind]?.status === "running") return;
+  setGenerationJob(project.id, kind, { status: "queued", error: null, finishedAt: null });
+  setGenerationJob(project.id, kind, { status: "running", error: null, finishedAt: null });
+  setLoad("world", true);
+  try {
+    const report = await generateWorldReport(projectRef.current || project);
+    persist({ worldReport: report, worldReportApproved: false });
+    setGenerationJob(project.id, kind, { status: "succeeded", error: null, finishedAt: new Date().toISOString() });
+    toast.success("Visual World Report generated");
+  } catch (e) {
+    const error = e.response?.data?.detail || e.message || "Failed to generate report";
+    setGenerationJob(project.id, kind, { status: "failed", error, finishedAt: new Date().toISOString() });
+    toast.error(error);
+  } finally { setLoad("world", false); }
+}
 
   async function doWorldAssets() {
-    setLoad("assets", true);
-    try {
-      const data = await generateWorldAssets(project);
-      const fb = data._fallback
-        ? { _fallback: true, _fallback_reason: data._fallback_reason, _fallback_message: data._fallback_message }
-        : null;
-      persist({
-        styleBible: data.world_style_bible,
-        characterSheet: data.character_sheet,
-        environmentSheet: data.environment_sheet,
-        worldAssetsFallback: fb,
-        styleBibleApproved: false,
-        characterSheetApproved: false,
-        environmentSheetApproved: false,
-      });
-      if (fb) toast.warning("World Assets: demo fallback generated (Claude unavailable)");
-      else toast.success("World Assets generated");
-    } catch (e) {
-      toast.error(e.response?.data?.detail || e.message || "Failed to generate assets");
-    } finally {
-      setLoad("assets", false);
-    }
-  }
+  const kind = "world-assets";
+  if (projectRef.current?.generationJobs?.[kind]?.status === "running") return;
+  setGenerationJob(project.id, kind, { status: "queued", error: null, finishedAt: null });
+  setGenerationJob(project.id, kind, { status: "running", error: null, finishedAt: null });
+  setLoad("assets", true);
+  try {
+    const data = await generateWorldAssets(projectRef.current || project);
+    const fb = data._fallback ? { _fallback: true, _fallback_reason: data._fallback_reason, _fallback_message: data._fallback_message } : null;
+    persist({ styleBible: data.world_style_bible, characterSheet: data.character_sheet, environmentSheet: data.environment_sheet, worldAssetsFallback: fb, styleBibleApproved: false, characterSheetApproved: false, environmentSheetApproved: false });
+    setGenerationJob(project.id, kind, { status: "succeeded", error: null, finishedAt: new Date().toISOString() });
+    if (fb) toast.warning("World Assets: demo fallback generated (Claude unavailable)"); else toast.success("World Assets generated");
+  } catch (e) {
+    const error = e.response?.data?.detail || e.message || "Failed to generate assets";
+    setGenerationJob(project.id, kind, { status: "failed", error, finishedAt: new Date().toISOString() });
+    toast.error(error);
+  } finally { setLoad("assets", false); }
+}
 
   async function doStoryboard() {
-    setLoad("story", true);
-    try {
-      const data = await generateStoryboard(project);
-      const fb = data._fallback
-        ? { _fallback: true, _fallback_reason: data._fallback_reason, _fallback_message: data._fallback_message }
-        : null;
-      persist({
-        storyboardScenes: data.scenes,
-        storyboardFallback: fb,
-        storyboardApproved: false,
-        sceneReferencePhotoIds: {},
-        scenePrompts: null,
-        scenePromptsFallback: null,
-        scenePromptsApproved: false,
-        sceneImages: {},
-        motionPlan: null,
-      });
-      if (fb) toast.warning("Storyboard: demo fallback generated (Claude unavailable)");
-      else toast.success("Storyboard generated (8 scenes)");
-    } catch (e) {
-      toast.error(e.response?.data?.detail || e.message || "Failed to generate storyboard");
-    } finally {
-      setLoad("story", false);
-    }
-  }
+  const kind = "storyboard";
+  if (projectRef.current?.generationJobs?.[kind]?.status === "running") return;
+  setGenerationJob(project.id, kind, { status: "queued", error: null, finishedAt: null });
+  setGenerationJob(project.id, kind, { status: "running", error: null, finishedAt: null });
+  setLoad("story", true);
+  try {
+    const data = await generateStoryboard(projectRef.current || project);
+    const fb = data._fallback ? { _fallback: true, _fallback_reason: data._fallback_reason, _fallback_message: data._fallback_message } : null;
+    persist({ storyboardScenes: data.scenes, storyboardFallback: fb, storyboardApproved: false, sceneReferencePhotoIds: {}, scenePrompts: null, scenePromptsFallback: null, scenePromptsApproved: false, sceneImages: {}, motionPlan: null });
+    setGenerationJob(project.id, kind, { status: "succeeded", error: null, finishedAt: new Date().toISOString() });
+    if (fb) toast.warning("Storyboard: demo fallback generated (Claude unavailable)"); else toast.success("Storyboard generated (8 scenes)");
+  } catch (e) {
+    const error = e.response?.data?.detail || e.message || "Failed to generate storyboard";
+    setGenerationJob(project.id, kind, { status: "failed", error, finishedAt: new Date().toISOString() });
+    toast.error(error);
+  } finally { setLoad("story", false); }
+}
 
   async function doScenePrompts() {
-    setLoad("prompts", true);
-    try {
-      // Substitute effective ref ids (overrides or suggestions) into storyboard payload
-      // so the LLM's prompt reflects the user's chosen references.
-      const effectiveStoryboard = (project.storyboardScenes || []).map((s) => ({
-        ...s,
-        reference_photo_ids: effectiveRefIds(s),
-      }));
-      const patchedProject = { ...project, storyboardScenes: effectiveStoryboard };
-      const data = await generateScenePrompts(patchedProject);
-      const fb = data._fallback
-        ? { _fallback: true, _fallback_reason: data._fallback_reason, _fallback_message: data._fallback_message }
-        : null;
-      persist({ scenePrompts: data.prompts, scenePromptsFallback: fb, scenePromptsApproved: false });
-      if (fb) toast.warning("Scene Prompts: demo fallback generated (Claude unavailable)");
-      else toast.success("Scene prompts generated");
-    } catch (e) {
-      toast.error(e.response?.data?.detail || e.message || "Failed to generate scene prompts");
-    } finally {
-      setLoad("prompts", false);
-    }
-  }
+  const kind = "scene-prompts";
+  if (projectRef.current?.generationJobs?.[kind]?.status === "running") return;
+  setGenerationJob(project.id, kind, { status: "queued", error: null, finishedAt: null });
+  setGenerationJob(project.id, kind, { status: "running", error: null, finishedAt: null });
+  setLoad("prompts", true);
+  try {
+    const currentProject = projectRef.current || project;
+    const effectiveStoryboard = (currentProject.storyboardScenes || []).map((s) => ({ ...s, reference_photo_ids: effectiveRefIds(s) }));
+    const data = await generateScenePrompts({ ...currentProject, storyboardScenes: effectiveStoryboard });
+    const fb = data._fallback ? { _fallback: true, _fallback_reason: data._fallback_reason, _fallback_message: data._fallback_message } : null;
+    persist({ scenePrompts: data.prompts, scenePromptsFallback: fb, scenePromptsApproved: false });
+    setGenerationJob(project.id, kind, { status: "succeeded", error: null, finishedAt: new Date().toISOString() });
+    if (fb) toast.warning("Scene Prompts: demo fallback generated (Claude unavailable)"); else toast.success("Scene prompts generated");
+  } catch (e) {
+    const error = e.response?.data?.detail || e.message || "Failed to generate scene prompts";
+    setGenerationJob(project.id, kind, { status: "failed", error, finishedAt: new Date().toISOString() });
+    toast.error(error);
+  } finally { setLoad("prompts", false); }
+}
 
   function sceneReferenceKey(scene) {
     return String(scene?.scene_number ?? scene?.id ?? "");
@@ -392,73 +381,33 @@ export default function ProjectWorkflow() {
   }
 
   async function doGenerateSceneImage(sceneNumber) {
-    if (!imageProviderReady) {
-      toast.error(
-        promptGuidedProviderActive
-          ? FREE_TEST_UNAVAILABLE_MESSAGE
-          : GEMINI_UNAVAILABLE_MESSAGE
-      );
-      return;
-    }
-    setLoad(`img-${sceneNumber}`, true);
-    try {
-      const scene = project.storyboardScenes.find((s) => s.scene_number === sceneNumber);
-      const prompt = project.scenePrompts?.find((p) => p.scene_number === sceneNumber);
-      const refIds = effectiveRefIds(scene);
-      const refs = (project.referencePhotos || []).filter((r) => refIds.includes(r.id));
-      const data = await generateSceneImage({
-        projectId: project.id,
-        sceneId: String(sceneNumber),
-        scenePrompt: prompt?.final_polished_prompt || scene?.visual_prompt || scene?.description || "",
-        stylePreset: styleLabel(project.style),
-        negativePrompt: prompt?.negative_prompt || "",
-        characterConsistencyNotes: prompt?.character_consistency_notes || "",
-        environmentConsistencyNotes: prompt?.environment_consistency_notes || "",
-        referenceImages: refs,
-      });
-      const sceneImages = { ...(project.sceneImages || {}) };
-      sceneImages[sceneNumber] = {
-        sourceType: "generated_from_reference",
-        imageDataUrl: data.generatedImageBase64,
-        approved: false,
-        providerName: data.providerName,
-        generatedAt: data.createdAt,
-        referencePhotoIdsUsed:
-          data.referencePhotoIdsUsed || [],
-        referenceMode:
-          data.referenceMode ||
-          "direct_reference_images",
-      };
-      persist({ sceneImages });
-      toast.success(`Scene ${sceneNumber} image generated`);
-    } catch (e) {
-      const status = e.response?.status;
-
-      if (
-        promptGuidedProviderActive &&
-        (!e.response ||
-          [401, 402, 429, 502, 503, 504].includes(status))
-      ) {
-        toast.error(
-          e.response?.data?.detail ||
-            FREE_TEST_UNAVAILABLE_MESSAGE
-        );
-      } else if (
-        !e.response ||
-        [402, 429, 502, 503, 504].includes(status)
-      ) {
-        toast.error(GEMINI_UNAVAILABLE_MESSAGE);
-      } else {
-        toast.error(
-          e.response?.data?.detail ||
-            e.message ||
-            "Image generation failed"
-        );
-      }
-    } finally {
-      setLoad(`img-${sceneNumber}`, false);
-    }
+  const kind = `scene-image:${sceneNumber}`;
+  if (projectRef.current?.generationJobs?.[kind]?.status === "running") return;
+  if (!imageProviderReady) {
+    toast.error(promptGuidedProviderActive ? FREE_TEST_UNAVAILABLE_MESSAGE : GEMINI_UNAVAILABLE_MESSAGE);
+    return;
   }
+  setGenerationJob(project.id, kind, { status: "queued", error: null, finishedAt: null });
+  setGenerationJob(project.id, kind, { status: "running", error: null, finishedAt: null });
+  setLoad(`img-${sceneNumber}`, true);
+  try {
+    const currentProject = projectRef.current || project;
+    const scene = currentProject.storyboardScenes.find((s) => s.scene_number === sceneNumber);
+    const prompt = currentProject.scenePrompts?.find((p) => p.scene_number === sceneNumber);
+    const refs = (currentProject.referencePhotos || []).filter((r) => effectiveRefIds(scene).includes(r.id));
+    const data = await generateSceneImage({ projectId: currentProject.id, sceneId: String(sceneNumber), scenePrompt: prompt?.final_polished_prompt || scene?.visual_prompt || scene?.description || "", stylePreset: styleLabel(currentProject.style), negativePrompt: prompt?.negative_prompt || "", characterConsistencyNotes: prompt?.character_consistency_notes || "", environmentConsistencyNotes: prompt?.environment_consistency_notes || "", referenceImages: refs });
+    const sceneImages = { ...(currentProject.sceneImages || {}) };
+    sceneImages[sceneNumber] = { sourceType: "generated_from_reference", imageDataUrl: data.generatedImageBase64, approved: false, providerName: data.providerName, generatedAt: data.createdAt, referencePhotoIdsUsed: data.referencePhotoIdsUsed || [], referenceMode: data.referenceMode || "direct_reference_images" };
+    persist({ sceneImages });
+    setGenerationJob(project.id, kind, { status: "succeeded", error: null, finishedAt: new Date().toISOString() });
+    toast.success(`Scene ${sceneNumber} image generated`);
+  } catch (e) {
+    const status = e.response?.status;
+    const error = promptGuidedProviderActive && (!e.response || [401,402,429,502,503,504].includes(status)) ? e.response?.data?.detail || FREE_TEST_UNAVAILABLE_MESSAGE : (!e.response || [402,429,502,503,504].includes(status)) ? GEMINI_UNAVAILABLE_MESSAGE : e.response?.data?.detail || e.message || "Image generation failed";
+    setGenerationJob(project.id, kind, { status: "failed", error, finishedAt: new Date().toISOString() });
+    toast.error(error);
+  } finally { setLoad(`img-${sceneNumber}`, false); }
+}
 
   async function handleManualUpload(sceneNumber, file) {
     if (!file) return;
