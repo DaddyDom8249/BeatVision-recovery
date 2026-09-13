@@ -7,6 +7,7 @@ import Landing from "@/pages/Landing";
 import Dashboard from "@/pages/Dashboard";
 import CreateProject from "@/pages/CreateProject";
 import ProjectWorkflow from "@/pages/ProjectWorkflow";
+import PersistentAnimationPage from "@/pages/PersistentAnimationPage";
 import Settings from "@/pages/Settings";
 import "@/App.css";
 
@@ -31,6 +32,7 @@ export default function App() {
           <Route path="/dashboard" element={<Layout><Dashboard /></Layout>} />
           <Route path="/new" element={<Layout><CreateProject /></Layout>} />
           <Route path="/project/:id" element={<Layout><ProjectWorkflow /></Layout>} />
+          <Route path="/project/:id/animation" element={<PersistentAnimationPage />} />
           <Route path="/settings" element={<Layout><Settings /></Layout>} />
         </Routes>
       </BrowserRouter>
