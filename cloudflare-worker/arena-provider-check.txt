@@ -1,0 +1,1 @@
+Arena provider integration is validated by .github/workflows/arena-provider-check.yml.
