@@ -1,28 +1,49 @@
-# BeatVision Cloudflare Image Worker
+# BeatVision Cloudflare Provider Worker
 
-This Worker provides Stage 06 image generation for BeatVision.
+This Worker now integrates the proven BeatVision Arena provider pipeline into the Recovery application without replacing the existing `/api/*` image routes.
 
-Public routes:
+## Provider pipeline
 
-- GET /api/health
-- GET /api/provider-status
-- POST /api/generate-scene-image
+- **Pollinations**: language/world direction and Whisper audio analysis.
+- **Pixazo**: Flux Schnell for world concepts, SDXL for scene imagery, and LTX Video for image-to-video motion.
+- **Shotstack Sandbox**: deterministic assembly, transitions, timeline extension, soundtrack and final MP4 rendering.
+- **Cloudflare Durable Objects**: persistent scene-by-scene animation jobs that survive page refreshes and continue independently of the browser.
 
-Cloudflare configuration:
+## Persistent animation routes
 
-- Workers AI binding name: AI
-- Required encrypted secret: BEATVISION_ACCESS_KEY
-- Model: @cf/black-forest-labs/flux-1-schnell
+- `GET /v1/capabilities`
+- `POST /v1/video/animate/jobs/:jobId`
+- `GET /v1/video/animate/jobs/:jobId`
+- `POST /v1/video/assemble`
+- `POST /v1/image/world-assets`
+- `POST /v1/image/scenes`
+- `POST /v1/language/world`
+- `POST /v1/language/storyboard`
+- `POST /v1/audio/analyze`
 
-Never commit the secret value.
+The animation Durable Object persists the current scene, completed clips, failed scenes, provider request IDs, retry state and event history. Provider polling runs from the Durable Object alarm rather than from the browser, with a seven-second provider poll interval and a five-second UI polling target.
 
-The current provider uses reference-photo names, types, descriptions, and
-selected IDs as prompt guidance. It does not send uploaded reference pixels
-to the FLUX model.
+## Secrets
 
-The real workers.dev URL and access key are stored outside the repository in:
+Configure these as Cloudflare Worker secrets. Never commit values:
 
-$HOME/.config/beatvision/worker.env
+- `GATEWAY_TOKEN`
+- `PIXAZO_API_KEY`
+- `LANGUAGE_PROVIDER_TOKEN`
+- `AUDIO_PROVIDER_TOKEN` (optional if the language token is reused)
+- `SHOTSTACK_API_KEY`
+- `BEATVISION_ACCESS_KEY` for the legacy `/api/*` image route
 
-Android Termux cannot run Cloudflare workerd. Deploy this Worker through the
-Cloudflare dashboard or a supported Linux CI runner.
+## Legacy Recovery routes
+
+The original Recovery Worker remains available under:
+
+- `GET /api/health`
+- `GET /api/provider-status`
+- `POST /api/generate-scene-image`
+
+This keeps the existing Recovery workflow compatible while the Arena provider contract is promoted into the same Worker.
+
+## Final assembly behavior
+
+When all animation scenes are complete, the client submits the persisted clip list and the original song to `/v1/video/assemble`. Shotstack builds the timeline to the source-song duration, varies the ordering of repeated cycles, applies alternating camera effects and transitions, attaches the actual source audio, and returns the render URL when complete.
