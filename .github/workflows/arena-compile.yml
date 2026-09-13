@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - name: Compile Cloudflare Worker
         run: npx --yes wrangler@latest deploy --dry-run --config cloudflare-worker/wrangler.jsonc --outdir=/tmp/beatvision-worker
       - name: Check integrated provider sources
