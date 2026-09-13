@@ -1,9 +1,26 @@
 {
-  "name": "beatvision-image-provider-test",
-  "main": "src/index.js",
-  "compatibility_date": "2026-07-22",
+  "name": "beatvision-provider-recovery",
+  "main": "src/video-fallback-gateway.ts",
+  "compatibility_date": "2026-09-09",
   "workers_dev": true,
-  "ai": {
-    "binding": "AI"
-  }
+  "ai": { "binding": "AI" },
+  "vars": {
+    "ALLOWED_ORIGIN": "*",
+    "LANGUAGE_PROVIDER": "pollinations",
+    "LANGUAGE_PROVIDER_MODEL": "openai",
+    "LANGUAGE_PROVIDER_URL": "https://gen.pollinations.ai/v1/chat/completions",
+    "VIDEO_PROVIDER": "pixazo",
+    "PIXAZO_WORLD_IMAGE_MODEL": "flux-schnell",
+    "PIXAZO_SCENE_IMAGE_MODEL": "sdxl",
+    "PIXAZO_MOTION_MODEL": "ltx-video",
+    "ASSEMBLY_PROVIDER": "shotstack-sandbox"
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "ANIMATION_JOBS", "class_name": "BeatVisionAnimationJob" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["BeatVisionAnimationJob"] }
+  ]
 }
