@@ -1,5 +1,5 @@
 import React from "react";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { Toaster } from "sonner";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import Layout from "@/components/Layout";
@@ -10,6 +10,13 @@ import ProjectWorkflow from "@/pages/ProjectWorkflow";
 import PersistentAnimationPage from "@/pages/PersistentAnimationPage";
 import Settings from "@/pages/Settings";
 import "@/App.css";
+
+function PersistentAnimationLauncher() {
+  const location = useLocation();
+  const match = location.pathname.match(/^\/project\/([^/]+)$/);
+  if (!match) return null;
+  return <a href={`/project/${encodeURIComponent(match[1])}/animation`} className="fixed bottom-5 right-5 z-50 btn-gold inline-flex items-center gap-2 shadow-lg" data-testid="persistent-animation-launcher">Persistent Animation</a>;
+}
 
 export default function App() {
   return (
@@ -35,6 +42,7 @@ export default function App() {
           <Route path="/project/:id/animation" element={<PersistentAnimationPage />} />
           <Route path="/settings" element={<Layout><Settings /></Layout>} />
         </Routes>
+        <PersistentAnimationLauncher />
       </BrowserRouter>
     </ErrorBoundary>
   );
