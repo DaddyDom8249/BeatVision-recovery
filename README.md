@@ -2,17 +2,15 @@
 
 **Every Song Has a World. BeatVision Reveals It.**
 
-BeatVision is an AI-assisted music-visualization workflow that turns a song into a consistent visual world, storyboard, scene prompts, scene images, and an eventual motion/video production pipeline.
+BeatVision is an AI-assisted music-visualization workflow that turns a song into a consistent visual world, storyboard, scene prompts, scene images, and a persistent motion/video production pipeline.
 
 ## Demo / provider-pitch status
 
-The `audit-stabilization` branch is the current demonstration and provider-pitch working branch. It is intended to demonstrate the existing BeatVision workflow reliably without changing the original BeatVision repository or pretending unfinished production integrations are complete.
-
-See `DEMO_PITCH.md` for the five-minute demonstration script, provider pitch, honest capability statement, and pre-demo checklist.
+The `audit-stabilization` branch is the current demonstration and provider-pitch working branch. The proven provider execution pieces from `BeatVision-arena` are now integrated without modifying that source repository or pretending external providers are configured when they are not.
 
 ## Current repository status
 
-This repository is the recovered **Phase 4A baseline** with subsequent stabilization work applied on `audit-stabilization`. It is intentionally treated as the working recovery source, not as a claim that it contains every change from later BeatVision exports.
+This repository is the recovered **Phase 4A baseline** with stabilization work plus the promoted Arena provider pipeline.
 
 The project currently contains:
 
@@ -21,16 +19,40 @@ The project currently contains:
 - Project revision tracking and generation-job state primitives
 - World Report generation with deterministic fallback behavior
 - World asset generation for the style bible, character sheet, and environment sheet
-- Storyboard generation
-- Scene prompt generation
+- Storyboard generation and scene prompt generation
 - Scene image generation/provider routing
 - Reference-photo support
-- Motion/export planning and browser-side rendering utilities
-- FastAPI backend
-- Cloudflare Worker and local worker proxy support
+- Browser-native rendering utilities
+- Persistent server-side animation jobs using Cloudflare Durable Objects
+- Pixazo Flux Schnell / SDXL / LTX provider routing
+- Pollinations language and Whisper audio routing
+- Shotstack Sandbox timeline assembly and MP4 rendering
 - Provider/fallback tests and CI validation
 - Frontend workflow-input and generation-output validation
 - Generation provenance metadata
+
+## Persistent motion pipeline
+
+The integrated Arena path is:
+
+`Approved scene images → persistent animation job → Pixazo LTX scene-by-scene motion → persisted clip results → Shotstack assembly → original song audio → final MP4`
+
+The job state survives browser refresh/navigation. The UI polls persisted status every five seconds while the Durable Object independently advances provider work. Browser data-URL images are staged server-side before being written into the durable job, avoiding oversized Durable Object state records.
+
+The project workflow exposes a **Persistent Animation** launcher at `/project/:id/animation` when the provider gateway is configured.
+
+## Provider configuration
+
+The Cloudflare Worker uses these server-side secrets:
+
+- `GATEWAY_TOKEN`
+- `PIXAZO_API_KEY`
+- `LANGUAGE_PROVIDER_TOKEN`
+- `AUDIO_PROVIDER_TOKEN` (optional if the language token is reused)
+- `SHOTSTACK_API_KEY`
+- `BEATVISION_ACCESS_KEY` for the legacy Recovery `/api/*` image route
+
+Frontend configuration is documented in `frontend/.env.worker.example`.
 
 ## Architecture rules
 
@@ -78,13 +100,11 @@ Use `scripts/start-worker-backed-local.sh` when testing the Cloudflare Worker th
 
 ## CI
 
-GitHub Actions validates Worker syntax/configuration, backend Python syntax, the local worker proxy, frontend persistence regressions, the backend provider contract audit, and the production frontend build on pushes and pull requests affecting the application.
+GitHub Actions validates Worker configuration, the Arena provider contract, backend Python syntax, the local worker proxy, frontend persistence regressions, provider routing tests, and the production frontend build.
 
-## Honest capability boundary
+## Capability boundary
 
-The recovered Phase 4A implementation has a working browser-native WebM renderer. AI motion generation and server-side MP4 export are **not** claimed as completed capabilities in this branch. Those are the next production infrastructure integrations.
-
-Later exports may contain additional functionality that should only be merged after code-level comparison and validation. Do not blindly overwrite this repository with a later snapshot.
+The Arena integration is code-complete and provider-routable, but live motion/assembly still requires the corresponding provider secrets and a deployed Cloudflare Worker. Without those credentials BeatVision reports the provider as unavailable rather than fabricating completed media.
 
 ## Recovery documentation
 
