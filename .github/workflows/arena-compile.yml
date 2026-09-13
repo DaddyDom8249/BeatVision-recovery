@@ -1,0 +1,29 @@
+name: BeatVision Arena Compile
+on:
+  push:
+    branches:
+      - audit-stabilization
+  pull_request:
+    branches:
+      - audit-stabilization
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Compile Cloudflare Worker
+        run: npx --yes wrangler@latest deploy --dry-run --config cloudflare-worker/wrangler.jsonc --outdir=/tmp/beatvision-worker
+      - name: Check integrated provider sources
+        run: |
+          test -s cloudflare-worker/src/animation-jobs.ts
+          test -s cloudflare-worker/src/pixazo-media-gateway-fixed.ts
+          test -s cloudflare-worker/src/pollinations-gateway-v2.ts
+          test -s cloudflare-worker/src/shotstack-gateway.ts
+          test -s frontend/src/lib/persistentAnimation.js
+          echo "Arena integration source checks: PASS"
